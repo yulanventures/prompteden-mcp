@@ -15,7 +15,7 @@ import {
   type CreateProjectInput,
 } from "./api-client/index.js";
 import {
-  isExcludedMonitorProviderKey,
+  unavailableMonitorProviderKeys,
   visibleMonitorProviders,
 } from "./monitor-providers.js";
 
@@ -697,7 +697,7 @@ export function registerPromptEdenTools(
         "'/' (e.g. /thanks) — absolute URLs are rejected with invalid_goal; the goal always belongs to the " +
         "property's own hostname. Counting is prospective from creation (within-visit attribution), no history " +
         "backfill. 409 goal_exists on a duplicate destination; 409 property_not_set_up when the project has no " +
-        "analytics property yet.",
+        "analytics property yet. This changes live tracking on the user's site.",
       inputSchema: {
         ...analyticsProjectInputSchema,
         name: z.string().min(1).max(80).describe("Goal display name."),
@@ -734,7 +734,7 @@ export function registerPromptEdenTools(
       title: "Archive analytics goal",
       description:
         "Archive a goal via DELETE /api/v1/analytics/goals/:goalId. Archival preserves history (state becomes " +
-        "'archived'); it does not delete data. Idempotent by state.",
+        "'archived'); it does not delete data. Idempotent by state. This changes live tracking on the user's site.",
       inputSchema: {
         ...analyticsProjectInputSchema,
         goalId: z.number().int().positive().describe("Stable numeric goal id from analytics_list_goals."),
@@ -761,7 +761,7 @@ export function registerPromptEdenTools(
     {
       title: "Add analytics property host",
       description:
-        "Add a public collection hostname via PATCH /api/v1/analytics/property. Target by propertyId alone. Keeps the canonical host and site key.",
+        "Add a public collection hostname via PATCH /api/v1/analytics/property. Target by propertyId alone. Keeps the canonical host and site key. This changes live tracking on the user's site.",
       inputSchema: addAnalyticsPropertyHostSchema.shape,
       annotations: {
         readOnlyHint: false,
@@ -857,7 +857,7 @@ export function registerPromptEdenTools(
         "Start a live verification run for a project's analytics property via POST " +
         "/api/v1/analytics/property/verification (202). The run checks script load and collector endpoint " +
         "asynchronously; poll analytics_get_verification for the outcome. Never fabricate a pass/fail — report " +
-        "the run's actual status. 429 with retryAt when retried too soon.",
+        "the run's actual status. 429 with retryAt when retried too soon. This starts an async live-site check.",
       inputSchema: analyticsProjectInputSchema,
       annotations: {
         readOnlyHint: false,
@@ -891,7 +891,7 @@ export function registerPromptEdenTools(
       description:
         "Create a PromptEden monitor via POST /api/v1/monitors. Requires projectSlug or projectId. " +
         "Defaults: type='search', language='en', country='US' (applied by the shared client). " +
-        "Coding-agent provider keys are rejected.",
+        "Only provider keys present in the filtered list_providers catalog are accepted.",
       // create_monitor's shared schema is a refined object (projectSlug OR
       // projectId), which has no JSON-Schema representation; advertise the field
       // shape here and let the shared createMonitorSchema enforce the refinement
@@ -936,16 +936,29 @@ export function registerPromptEdenTools(
     },
     async (args) => {
       const targets = Array.isArray(args.targets) ? args.targets : [];
-      const rejected = targets
-        .map((target) => String(target?.providerKey ?? ""))
-        .filter((key) => isExcludedMonitorProviderKey(key));
+      const requested = targets.map((target) => String(target?.providerKey ?? ""));
+      const payload = await getClient().providers.list();
+      if (!isRecord(payload) || !Array.isArray(payload.providers)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                "The provider catalog did not return a provider list, so the monitor was not created. " +
+                "Call list_providers and retry with a key from that list.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      const rejected = unavailableMonitorProviderKeys(requested, payload.providers);
       if (rejected.length > 0) {
         return {
           content: [
             {
               type: "text",
               text:
-                `providerKey ${rejected.join(", ")} is not available. ` +
+                `providerKey ${rejected.join(", ")} is not in the provider catalog. ` +
                 "Call list_providers and choose a key from that list.",
             },
           ],

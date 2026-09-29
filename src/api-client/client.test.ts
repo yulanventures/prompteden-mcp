@@ -11,6 +11,7 @@ import {
 } from "./index.js";
 import {
   isExcludedMonitorProviderKey,
+  unavailableMonitorProviderKeys,
   visibleMonitorProviders,
 } from "../monitor-providers.js";
 import { ApiError } from './errors.js';
@@ -163,6 +164,30 @@ test('baseUrl accepts only https://app.prompteden.com', () => {
   assert.throws(
     () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'not a url' }),
     /valid URL/,
+  );
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://app.prompteden.com.' }),
+    /not allowed/,
+  );
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'http://app.prompteden.com' }),
+    /not allowed/,
+  );
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://app.prompteden.com:8443' }),
+    /not allowed/,
+  );
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://app.prompteden.com/?x=1' }),
+    /query or hash/,
+  );
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://app.prompteden.com/#frag' }),
+    /query or hash/,
+  );
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://\u0430pp.prompteden.com' }),
+    /not allowed/,
   );
 });
 
@@ -338,4 +363,14 @@ test("monitor provider filter drops coding-agent catalog entries and known keys"
   assert.equal(isExcludedMonitorProviderKey("claude-code"), true);
   assert.equal(isExcludedMonitorProviderKey("CODEX"), true);
   assert.equal(isExcludedMonitorProviderKey("openai"), false);
+  assert.deepEqual(
+    unavailableMonitorProviderKeys(
+      ["openai", "other-agent", "mystery"],
+      [
+        { key: "openai", name: "OpenAI", category: "search" },
+        { key: "other-agent", name: "Other Agent", category: "agent" },
+      ],
+    ),
+    ["other-agent", "mystery"],
+  );
 });

@@ -42,3 +42,22 @@ export function visibleMonitorProviders(providers: unknown[]): unknown[] {
     return !isExcludedMonitorProvider(provider as MonitorProviderRecord);
   });
 }
+
+export function allowedMonitorProviderKeys(providers: unknown[]): Set<string> {
+  const allowed = new Set<string>();
+  for (const provider of visibleMonitorProviders(providers)) {
+    if (typeof provider !== "object" || provider === null) continue;
+    const key = normalized((provider as MonitorProviderRecord).key);
+    if (key) allowed.add(key);
+  }
+  return allowed;
+}
+
+/** Keys that are absent from the filtered catalog, including category-excluded entries. */
+export function unavailableMonitorProviderKeys(
+  requested: string[],
+  providers: unknown[],
+): string[] {
+  const allowed = allowedMonitorProviderKeys(providers);
+  return requested.filter((key) => !allowed.has(normalized(key)));
+}

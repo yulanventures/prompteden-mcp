@@ -49,14 +49,23 @@ const READ_TOOLS = new Set([
   "analytics_list_goals",
 ]);
 
-function startMcp({ withKey = true, baseUrl = ALLOWED_ORIGIN } = {}) {
+function startMcp({ withKey = true, baseUrl = ALLOWED_ORIGIN, catalog } = {}) {
   const env = { ...process.env };
   if (baseUrl === undefined) delete env.PROMPTEDEN_BASE_URL;
   else env.PROMPTEDEN_BASE_URL = baseUrl;
   if (withKey) env.PROMPTEDEN_API_KEY = fakeApiKey;
   else delete env.PROMPTEDEN_API_KEY;
 
-  const child = spawn(process.execPath, [SERVER_ENTRY], {
+  const args = [SERVER_ENTRY];
+  if (catalog) {
+    env.SMOKE_PROVIDER_CATALOG = JSON.stringify(catalog);
+    args.unshift(
+      "--import",
+      new URL("./scripts/smoke-fetch-mock.mjs", import.meta.url).pathname,
+    );
+  }
+
+  const child = spawn(process.execPath, args, {
     env,
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -127,7 +136,14 @@ async function handshake(mcp, id) {
   return result;
 }
 
-const mcp = startMcp();
+const mcp = startMcp({
+  catalog: {
+    providers: [
+      { key: "openai", name: "OpenAI", category: "search" },
+      { key: "other-agent", name: "Other Agent", category: "agent" },
+    ],
+  },
+});
 let noKeyMcp;
 let badOriginMcp;
 
@@ -164,13 +180,15 @@ try {
       name: "Daily visibility",
       cadenceMinutes: 1440,
       promptInstructions: "Track the brand",
-      targets: [{ providerKey: "claude-code" }, { providerKey: "codex" }],
+      targets: [{ providerKey: "other-agent" }],
     },
   });
   assert.equal(rejected.error, undefined);
   assert.equal(rejected.result.isError, true);
-  assert.match(rejected.result.content[0].text, /not available/);
+  assert.match(rejected.result.content[0].text, /other-agent/);
+  assert.match(rejected.result.content[0].text, /not in the provider catalog/);
   assert.equal(rejected.result.content[0].text.includes(fakeApiKey), false);
+  assert.equal(mcp.stderr().includes("unexpected monitor create"), false);
 
   const negotiated = await send(mcp, 4, "initialize", initParams("2025-06-18"));
   assert.equal(negotiated.protocolVersion, "2025-06-18");
