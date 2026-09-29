@@ -1,0 +1,47 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.yulanventures/prompteden-mcp",
+  "title": "PromptEden",
+  "description": "MCP server for PromptEden accounts, monitors, content, and analytics.",
+  "websiteUrl": "https://app.prompteden.com",
+  "repository": {
+    "url": "https://github.com/yulanventures/prompteden-mcp",
+    "source": "github"
+  },
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@prompteden/mcp-server",
+      "version": "0.3.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PROMPTEDEN_API_KEY",
+          "description": "PromptEden API key. Required for every tool except agent_sign_up and agent_sign_in.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "PROMPTEDEN_BASE_URL",
+          "description": "Optional API base URL. Defaults to https://app.prompteden.com.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "default": "https://app.prompteden.com"
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://app.prompteden.com/api/mcp"
+    }
+  ]
+}
