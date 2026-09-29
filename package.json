@@ -1,7 +1,7 @@
 {
   "name": "@prompteden/mcp-server",
   "version": "0.3.0",
-  "description": "Stdio MCP server for the PromptEden API.",
+  "description": "MCP server that lets Claude, Codex, Cursor and other MCP clients read your PromptEden data: projects, monitors, captured answers, and analytics.",
   "mcpName": "io.github.yulanventures/prompteden-mcp",
   "license": "MIT",
   "type": "module",
@@ -29,8 +29,14 @@
   },
   "keywords": [
     "mcp",
-    "modelcontextprotocol",
-    "prompteden"
+    "ai-visibility",
+    "answer-engine-optimization",
+    "brand-monitoring",
+    "marketing-analytics",
+    "web-analytics",
+    "small-business",
+    "claude",
+    "stdio"
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",

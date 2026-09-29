@@ -1,10 +1,26 @@
 # @prompteden/mcp-server
 
-Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for the PromptEden API. It exposes account, project, monitor, content, newsroom, and analytics tools. The published package is a single file, `dist/index.mjs`, and runs on Node.js 20 or newer.
+**Track your brand in AI answers from your own agent**
+
+MCP server that lets Claude, Codex, Cursor and other MCP clients read your PromptEden data: projects, monitors, captured answers, and analytics.
+
+PromptEden checks how AI answers talk about your business. Answer engines come from the live provider catalog (`list_providers`); a monitor target uses one of those provider keys. This MCP server gives your own agent that data, so you can ask about it in Claude, Codex, Cursor, or any other MCP client you already use.
+
+Your agent can list projects and monitors, pull captured answers (`get_results` returns the API JSON and accepts a `since` date), set up a new project or monitor, and check your plan and usage. This server does not add citation or competitor fields of its own. `preview_displacement_scan` accepts an optional competitor list and does not persist it. If you have the PromptEden analytics snippet on your site, the agent can also read visits that came from AI engines, set up goals, and check that the snippet is working. Content engine tools are included. They declare `content:read`, `content:write`, `topics:read`, or `topics:write`, and this package does not check a separate content-access flag before calling them. Read tools are marked read-only, and every write tool is marked non-destructive.
+
+The server runs locally over stdio on Node 20 or later. It uses your own PromptEden API key, passed as `PROMPTEDEN_API_KEY`, and it does not store your key. For an existing account, create the key under Settings > API Keys. `agent_sign_up` can mint a key without that page. This package does not check that the account plan includes API access.
 
 ```bash
 npx -y @prompteden/mcp-server
 ```
+
+The published package is a single file, `dist/index.mjs`.
+
+## Example prompts
+
+1. Using PromptEden, fetch each monitor's results from the last 7 days and summarize the captured answers, including any competitor or cited-source fields the result JSON actually contains.
+2. Create a PromptEden project for mysite.com, then add a monitor that runs once a day. Call `list_providers` and target two engines from that catalog with a prompt asking which local bakeries they would recommend.
+3. How many visits did my site get from AI engines last week, and which pages did they land on?
 
 ## Install and configure
 

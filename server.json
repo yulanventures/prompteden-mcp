@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.yulanventures/prompteden-mcp",
   "title": "PromptEden",
-  "description": "MCP server for PromptEden accounts, monitors, content, and analytics.",
+  "description": "Stdio MCP server for PromptEden projects, monitors, captured answers, and analytics.",
   "websiteUrl": "https://app.prompteden.com",
   "repository": {
     "url": "https://github.com/yulanventures/prompteden-mcp",
