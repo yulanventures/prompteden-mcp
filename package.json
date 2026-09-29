@@ -41,9 +41,11 @@
     "test": "npm run test:client",
     "smoke": "node dist/index.mjs --help && node smoke.mjs",
     "tools:table": "node scripts/tools-table.mjs --check",
+    "mcpb": "node scripts/build-mcpb.mjs",
     "prepack": "npm run build"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@types/node": "^22.15.18",
     "esbuild": "^0.25.0",

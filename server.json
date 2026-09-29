@@ -37,11 +37,5 @@
         }
       ]
     }
-  ],
-  "remotes": [
-    {
-      "type": "streamable-http",
-      "url": "https://app.prompteden.com/api/mcp"
-    }
   ]
 }

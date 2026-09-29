@@ -10,9 +10,11 @@ npx -y @prompteden/mcp-server
 
 Set `PROMPTEDEN_API_KEY` to a PromptEden API key. `PROMPTEDEN_BASE_URL` is optional and defaults to `https://app.prompteden.com`.
 
-No key yet? Start the server and call `agent_sign_up`. It works without `PROMPTEDEN_API_KEY` and returns a new key. Set that value as `PROMPTEDEN_API_KEY`, then use the other tools.
+No key yet? Start the server and call `agent_sign_up`. It works without `PROMPTEDEN_API_KEY`. The tool posts to `POST /api/v1/agent/sign-up` and returns the response, including `apiKey` when the API sends one. Set that value as `PROMPTEDEN_API_KEY`, then call the other tools.
 
-For an existing account, create a scoped key in Settings > API Keys, or connect to the hosted endpoint with OAuth. `agent_sign_in` is compatibility-only for a case where a person explicitly supplied credentials.
+A key from `agent_sign_up` is not checked against the account plan. This package does not read a plan, wait for API access, or block the new key until a plan that includes API access is active. The next tool call sends that key as a bearer token. If the API rejects it, the call comes back as a tool error.
+
+For an existing account, create a scoped key in Settings > API Keys. `agent_sign_in` is compatibility-only for a case where a person explicitly supplied credentials.
 
 ### Claude Desktop
 
@@ -81,6 +83,8 @@ Add the same `mcpServers` entry to Cursor's MCP config (`.cursor/mcp.json` or Cu
 Names and descriptions below are generated from the server's `tools/list` response (`node scripts/tools-table.mjs`).
 
 <!-- tools:start -->
+This build registers 38 tools. Analytics tools are included (11): `analytics_get_property`, `analytics_get_verification`, `analytics_get_traffic`, `analytics_get_overview`, `analytics_list_goals`, `analytics_create_goal`, `analytics_archive_goal`, `analytics_add_property_host`, `analytics_create_property`, `analytics_rotate_key`, `analytics_verify_property`.
+
 | Tool | Description |
 | --- | --- |
 | `get_account` | Get PromptEden team, plan, and usage details via GET /api/v1/account. |
@@ -123,30 +127,11 @@ Names and descriptions below are generated from the server's `tools/list` respon
 | `agent_sign_in` | Compatibility-only: mint a PromptEden API key for an existing account when the human explicitly provided credentials. For an existing account, do not ask for a password; use Settings > API Keys or hosted OAuth instead. |
 <!-- tools:end -->
 
-## Hosted endpoint
-
-PromptEden also hosts a Streamable HTTP MCP endpoint:
-
-```text
-https://app.prompteden.com/api/mcp
-```
-
-Send `Authorization: Bearer <api-key>`, or use OAuth. Discovery documents:
-
-```text
-https://app.prompteden.com/.well-known/oauth-protected-resource
-https://app.prompteden.com/.well-known/oauth-authorization-server
-```
-
-Read tools run directly. On the hosted endpoint, write, spend, and outbound tools are not executed directly. Where an approval mapping exists, the call returns `approval_required` with a browser link. After a signed-in owner or admin reviews it, poll `check_approval`. `check_approval` on this stdio package reports that approval polling is only available on the hosted endpoint.
-
-`analytics_create_property` and `analytics_rotate_key` return a site key once. Those two tools are disabled on the hosted endpoint. Install the key immediately; rotate to mint a replacement.
-
 ## Security
 
 - The API key stays in the environment. This process does not persist it, and tool results are checked so the configured key is not echoed back.
 - Do not commit an API key, put one in a shell history you share, or paste one into a client config that is checked in.
-- Prefer a scoped key from Settings > API Keys, or hosted OAuth, over sharing an account password with an agent.
+- Prefer a scoped key from Settings > API Keys over sharing an account password with an agent.
 - `analytics_get_traffic` and `analytics_get_overview` use `totals: null` to mean "no basis to report". That is not zero traffic.
 - The site key from create or rotate is shown once. Treat it like a secret and do not store it in chat logs you keep.
 
@@ -156,13 +141,14 @@ Read tools run directly. On the hosted endpoint, write, spend, and outbound tool
 npm ci
 npm run typecheck
 npm run build
+npm run mcpb
 npm test
 node dist/index.mjs --help
 node smoke.mjs
 npm pack --dry-run
 ```
 
-`npm run build` typechecks, then bundles the MCP SDK, API client, and tool registry into `dist/index.mjs`.
+`npm run build` typechecks, then bundles the MCP SDK, API client, and tool registry into `dist/index.mjs`. `npm run mcpb` packs that file into `build/prompteden-mcp-<version>.mcpb` (manifest version 0.3). The npm tarball does not include the `.mcpb` file. CI uploads it as a workflow artifact.
 
 ## License
 

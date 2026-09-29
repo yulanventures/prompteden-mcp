@@ -24,4 +24,11 @@ jobs:
       - run: node dist/index.mjs --help
       - run: node smoke.mjs
       - run: node scripts/tools-table.mjs --check
+      - run: npm run mcpb
       - run: npm pack --dry-run
+      - uses: actions/upload-artifact@v4
+        if: matrix.node == 22
+        with:
+          name: prompteden-mcp.mcpb
+          path: build/*.mcpb
+          if-no-files-found: error

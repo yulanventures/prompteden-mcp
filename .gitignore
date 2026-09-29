@@ -1,6 +1,8 @@
 node_modules/
 dist/
+build/
 *.tgz
+*.mcpb
 .DS_Store
 .env
 .env.*

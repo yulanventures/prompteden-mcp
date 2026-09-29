@@ -79,7 +79,12 @@ function cell(value) {
 }
 
 function render(tools) {
+  const analytics = tools
+    .filter((tool) => tool.name.startsWith("analytics_"))
+    .map((tool) => `\`${tool.name}\``);
   const rows = [
+    `This build registers ${tools.length} tools. Analytics tools are included (${analytics.length}): ${analytics.join(", ")}.`,
+    "",
     "| Tool | Description |",
     "| --- | --- |",
     ...tools.map((tool) => `| \`${cell(tool.name)}\` | ${cell(tool.description)} |`),
