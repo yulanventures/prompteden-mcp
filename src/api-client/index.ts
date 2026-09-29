@@ -1,8 +1,8 @@
 /**
  * Typed PromptEden REST client used by the MCP server.
  *
- * Re-exports the client factory, the route manifest, the zod write and
- * onboarding schemas plus inferred types, and ApiError.
+ * Re-exports the client factory, the route manifest, the zod write schemas,
+ * inferred types, and ApiError.
  */
 
 export { createClient } from './client.js';
@@ -11,8 +11,7 @@ export type {
   PromptEdenClient,
   ResultsQuery,
   ProjectQuery,
-  ContentListQuery,
-  NewsroomProjectQuery,
+  ProjectRefQuery,
   AnalyticsProjectQuery,
   AnalyticsTrafficQuery,
   AnalyticsRangeQuery,
@@ -27,15 +26,6 @@ export {
   monitorTargetSchema,
   createMonitorSchema,
   createProjectSchema,
-  createTopicSchema,
-  generateArticleSchema,
-  regenerateArticleSchema,
-  updateArticleSchema,
-  updateTopicSchema,
-  createNewsroomSetupSchema,
-  applyNewsroomSetupSchema,
-  agentSignUpSchema,
-  agentSignInSchema,
   createAnalyticsPropertySchema,
   rotateAnalyticsPropertyKeySchema,
   startAnalyticsVerificationSchema,
@@ -46,15 +36,6 @@ export type {
   CreateMonitorInput,
   CreateMonitorPayload,
   CreateProjectInput,
-  CreateTopicInput,
-  GenerateArticleInput,
-  RegenerateArticleInput,
-  UpdateArticleInput,
-  UpdateTopicInput,
-  CreateNewsroomSetupInput,
-  ApplyNewsroomSetupInput,
-  AgentSignUpInput,
-  AgentSignInInput,
   CreateAnalyticsPropertyInput,
   RotateAnalyticsPropertyKeyInput,
   StartAnalyticsVerificationInput,

@@ -99,12 +99,12 @@ const manifest = {
   display_name: "PromptEden",
   version: pkg.version,
   description:
-    "MCP server that lets Claude, Codex, Cursor and other MCP clients read your PromptEden data: projects, monitors, captured answers, and analytics.",
+    "Stdio MCP server for PromptEden projects, monitors, captured answers, and analytics.",
   long_description:
     "Track your brand in AI answers from your own agent. " +
-    "PromptEden checks how AI answers talk about your business. Answer engines come from the live provider catalog (list_providers); a monitor target uses one of those provider keys. This MCP server gives your own agent that data, so you can ask about it in Claude, Codex, Cursor, or any other MCP client you already use.\n\n" +
-    "Your agent can list projects and monitors, pull captured answers (get_results returns the API JSON and accepts a since date), set up a new project or monitor, and check your plan and usage. This server does not add citation or competitor fields of its own. preview_displacement_scan accepts an optional competitor list and does not persist it. If you have the PromptEden analytics snippet on your site, the agent can also read visits that came from AI engines, set up goals, and check that the snippet is working. Content engine tools are included. They declare content:read, content:write, topics:read, or topics:write, and this package does not check a separate content-access flag before calling them. Read tools are marked read-only, and every write tool is marked non-destructive.\n\n" +
-    "The server runs locally over stdio on Node 20 or later. It uses your own PromptEden API key, passed as PROMPTEDEN_API_KEY, and it does not store your key. For an existing account, create the key under Settings > API Keys. agent_sign_up can mint a key without that page. This package does not check that the account plan includes API access.",
+    "PromptEden checks how AI answers talk about your business. Answer engines come from the live provider catalog (list_providers); a monitor target uses one of those provider keys. Coding-agent providers are omitted. This MCP server gives your own agent that data, so you can ask about it in Claude, Codex, Cursor, or any other MCP client you already use.\n\n" +
+    "Your agent can list projects and monitors, pull captured answers (get_results returns the API JSON and accepts a since date), set up a new project or monitor, and check your plan and usage. This server does not add citation or competitor fields of its own. Creating a monitor starts recurring metered runs and uses credits. Other tools do not use credits. If you have the PromptEden analytics snippet on your site, the agent can also read visits that came from AI engines, set up goals, and check that the snippet is working. Read tools are marked read-only, and every write tool is marked non-destructive.\n\n" +
+    "The server runs locally over stdio on Node 20 or later. Create an account on the web, then pass an API key from Settings > API Keys as PROMPTEDEN_API_KEY. The server does not store your key. PROMPTEDEN_BASE_URL is optional and, when set, must be https://app.prompteden.com.",
   author: {
     name: "Yulan Ventures LLC",
     url: "https://prompteden.com",
@@ -154,14 +154,15 @@ const manifest = {
       type: "string",
       title: "PromptEden API key",
       description:
-        "PromptEden API key, passed as PROMPTEDEN_API_KEY. Optional for agent_sign_up and agent_sign_in. The server does not write it to disk.",
+        "PromptEden API key from Settings > API Keys, passed as PROMPTEDEN_API_KEY. The server does not write it to disk.",
       sensitive: true,
-      required: false,
+      required: true,
     },
     base_url: {
       type: "string",
       title: "PromptEden base URL",
-      description: "API origin passed as PROMPTEDEN_BASE_URL.",
+      description:
+        "Optional. When set, must be https://app.prompteden.com. Any other origin is rejected. Passed as PROMPTEDEN_BASE_URL.",
       default: "https://app.prompteden.com",
       required: false,
     },

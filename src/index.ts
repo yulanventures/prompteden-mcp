@@ -1,8 +1,5 @@
 /**
  * PromptEden MCP stdio server.
- *
- * The tool surface lives in @prompteden/mcp-tools so the stdio fallback and
- * hosted Streamable HTTP endpoint advertise and execute the same registry.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -21,14 +18,12 @@ Usage:
   prompteden-mcp
 
 Onboarding:
-  No API key yet? Call agent_sign_up to mint one, set PROMPTEDEN_API_KEY to the
-  returned value, then use the other tools. agent_sign_up and agent_sign_in
-  work without PROMPTEDEN_API_KEY; every other tool requires it.
+  Create an account on the web, then set PROMPTEDEN_API_KEY to an API key from
+  Settings > API Keys. Every tool requires that key. The server does not store it.
 
 Environment:
-  PROMPTEDEN_API_KEY   Required for all tools except agent_sign_up / agent_sign_in.
-                       The server does not persist API keys.
-  PROMPTEDEN_BASE_URL  Optional. Defaults to ${DEFAULT_BASE_URL}.
+  PROMPTEDEN_API_KEY   Required. The server does not persist API keys.
+  PROMPTEDEN_BASE_URL  Optional. When set, must be ${DEFAULT_BASE_URL}.
 
 Transport:
   Model Context Protocol over stdio (@modelcontextprotocol/sdk). The SDK owns

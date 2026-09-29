@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *  - URL building from a base URL + path + query (URLSearchParams).
- *  - Bearer auth when an API key is present; agent.signUp/signIn work without.
+ *  - Bearer auth. Every call requires an API key.
  *  - Idempotency-Key on writes (one key per logical request, reused on retry).
  *  - Per-attempt AbortController timeout.
  *  - Retry on 429 / 5xx with exponential backoff honouring Retry-After.
@@ -14,9 +14,6 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from './errors.js';
 import {
-  agentSignInSchema,
-  agentSignUpSchema,
-  applyNewsroomSetupSchema,
   createAnalyticsGoalSchema,
   createAnalyticsPropertySchema,
   addAnalyticsPropertyHostSchema,
@@ -24,28 +21,13 @@ import {
   rotateAnalyticsPropertyKeySchema,
   startAnalyticsVerificationSchema,
   createMonitorSchema,
-  createNewsroomSetupSchema,
   createProjectSchema,
-  createTopicSchema,
-  generateArticleSchema,
-  regenerateArticleSchema,
-  updateArticleSchema,
-  updateTopicSchema,
-  type AgentSignInInput,
-  type AgentSignUpInput,
-  type ApplyNewsroomSetupInput,
   type CreateAnalyticsGoalInput,
   type CreateAnalyticsPropertyInput,
   type RotateAnalyticsPropertyKeyInput,
   type StartAnalyticsVerificationInput,
   type CreateMonitorInput,
-  type CreateNewsroomSetupInput,
   type CreateProjectInput,
-  type CreateTopicInput,
-  type GenerateArticleInput,
-  type RegenerateArticleInput,
-  type UpdateArticleInput,
-  type UpdateTopicInput,
 } from "./schemas.js";
 
 const DEFAULT_BASE_URL = 'https://app.prompteden.com';
@@ -87,27 +69,18 @@ export type ProjectQuery = {
   projectId: number;
 };
 
-/**
- * Query for the content list routes. The server's GET /content/topics and
- * GET /content/articles accept EITHER a numeric `projectId` OR a string
- * `projectUuid` (at least one is required, validated server-side).
- */
-export type ContentListQuery = {
+/** Project reference accepted by analytics routes. */
+export type ProjectRefQuery = {
   projectId?: number;
   projectUuid?: string;
 };
 
-/** Project reference accepted by the newsroom setup collection routes. */
-export type NewsroomProjectQuery = ContentListQuery & {
-  projectSlug?: string;
-};
-
 /**
- * Analytics target: explicit tenant-scoped propertyId is PRIMARY; a project
- * reference is the exactly-one convenience fallback (the server 409s
- * property_scope_ambiguous rather than picking silently).
+ * Analytics target: explicit propertyId is primary; a project reference is the
+ * exactly-one fallback (the server returns 409 property_scope_ambiguous rather
+ * than picking silently).
  */
-export type AnalyticsProjectQuery = ContentListQuery & {
+export type AnalyticsProjectQuery = ProjectRefQuery & {
   propertyId?: number;
 };
 
@@ -151,43 +124,6 @@ export type PromptEdenClient = {
     create(input: CreateProjectInput): Promise<unknown>;
     get(projectId: number | string): Promise<unknown>;
   };
-  content: {
-    topics: {
-      list(query: ContentListQuery): Promise<unknown>;
-      create(input: CreateTopicInput): Promise<unknown>;
-      update(
-        topicId: number | string,
-        patch: UpdateTopicInput,
-      ): Promise<unknown>;
-    };
-    articles: {
-      list(query: ContentListQuery): Promise<unknown>;
-      generate(input: GenerateArticleInput): Promise<unknown>;
-      publish(articleId: number | string): Promise<unknown>;
-      fix(articleId: number | string): Promise<unknown>;
-      regenerate(
-        articleId: number | string,
-        input?: RegenerateArticleInput,
-      ): Promise<unknown>;
-      get(articleId: number | string): Promise<unknown>;
-      update(
-        articleId: number | string,
-        patch: UpdateArticleInput,
-      ): Promise<unknown>;
-    };
-    newsroom: {
-      setups: {
-        list(query: NewsroomProjectQuery): Promise<unknown>;
-        create(input: CreateNewsroomSetupInput): Promise<unknown>;
-        get(setupId: number | string): Promise<unknown>;
-        apply(
-          setupId: number | string,
-          input?: ApplyNewsroomSetupInput,
-        ): Promise<unknown>;
-        dismiss(setupId: number | string): Promise<unknown>;
-      };
-    };
-  };
   analytics: {
     property: {
       get(query: AnalyticsProjectQuery): Promise<unknown>;
@@ -214,26 +150,42 @@ export type PromptEdenClient = {
       ): Promise<unknown>;
     };
   };
-  displacementScan: {
-    preview(payload?: unknown): Promise<unknown>;
-  };
   agent: {
-    signUp(input: AgentSignUpInput): Promise<unknown>;
-    signIn(input: AgentSignInInput): Promise<unknown>;
     status(): Promise<unknown>;
   };
 };
+
+const ALLOWED_BASE_ORIGIN = "https://app.prompteden.com";
 
 function normalizeBaseUrl(value: string): string {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error('createClient: baseUrl must be a valid URL.');
+    throw new Error(
+      `createClient: baseUrl must be a valid URL. The only allowed origin is ${ALLOWED_BASE_ORIGIN}.`,
+    );
   }
-  // A trailing slash on the base is load-bearing for `new URL(path, base)`
-  // when the base has a non-root pathname.
-  url.pathname = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
+  const origin = url.origin;
+  if (url.username || url.password || origin !== ALLOWED_BASE_ORIGIN) {
+    throw new Error(
+      `createClient: baseUrl origin ${origin || value} is not allowed. Use ${ALLOWED_BASE_ORIGIN}.`,
+    );
+  }
+  if (url.pathname !== "/" && url.pathname !== "") {
+    throw new Error(
+      `createClient: baseUrl must be ${ALLOWED_BASE_ORIGIN} with no path.`,
+    );
+  }
+  if (url.search || url.hash) {
+    throw new Error(
+      `createClient: baseUrl must be ${ALLOWED_BASE_ORIGIN} with no query or hash.`,
+    );
+  }
+  // A trailing slash is load-bearing for `new URL(path, base)`.
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
   return url.toString();
 }
 
@@ -288,7 +240,7 @@ export function createClient(options: CreateClientOptions = {}): PromptEdenClien
     if (requiresAuth && !apiKey) {
       throw new Error(
         `PromptEden API key required to call ${method} ${path}. ` +
-          'Pass apiKey to createClient(), call agent.signUp() for a new workspace, or ask the human for a delegated key/OAuth approval.',
+          "Create an account on the web, then pass an API key from Settings > API Keys.",
       );
     }
 
@@ -380,103 +332,6 @@ export function createClient(options: CreateClientOptions = {}): PromptEdenClien
           `/api/v1/projects/${encodeURIComponent(String(projectId))}`,
         ),
     },
-    content: {
-      topics: {
-        list: (query) =>
-          request("GET", "/api/v1/content/topics", {
-            query: {
-              projectId: query.projectId,
-              projectUuid: query.projectUuid,
-            },
-          }),
-        create: (input) =>
-          request("POST", "/api/v1/content/topics", {
-            body: createTopicSchema.parse(input),
-          }),
-        update: (topicId, patch) =>
-          request(
-            "PATCH",
-            `/api/v1/content/topics/${encodeURIComponent(String(topicId))}`,
-            {
-              body: updateTopicSchema.parse(patch),
-            },
-          ),
-      },
-      articles: {
-        list: (query) =>
-          request("GET", "/api/v1/content/articles", {
-            query: {
-              projectId: query.projectId,
-              projectUuid: query.projectUuid,
-            },
-          }),
-        generate: (input) =>
-          request("POST", "/api/v1/content/articles", {
-            body: generateArticleSchema.parse(input),
-          }),
-        publish: (articleId) =>
-          request(
-            "POST",
-            `/api/v1/content/articles/${encodeURIComponent(String(articleId))}/publish`,
-          ),
-        fix: (articleId) =>
-          request(
-            "POST",
-            `/api/v1/content/articles/${encodeURIComponent(String(articleId))}/fix`,
-          ),
-        regenerate: (articleId, input) =>
-          request(
-            "POST",
-            `/api/v1/content/articles/${encodeURIComponent(String(articleId))}/regenerate`,
-            { body: regenerateArticleSchema.parse(input ?? {}) },
-          ),
-        get: (articleId) =>
-          request(
-            "GET",
-            `/api/v1/content/articles/${encodeURIComponent(String(articleId))}`,
-          ),
-        update: (articleId, patch) =>
-          request(
-            "PATCH",
-            `/api/v1/content/articles/${encodeURIComponent(String(articleId))}`,
-            {
-              body: updateArticleSchema.parse(patch),
-            },
-          ),
-      },
-      newsroom: {
-        setups: {
-          list: (query) =>
-            request("GET", "/api/v1/content/newsroom/setups", {
-              query: {
-                projectId: query.projectId,
-                projectSlug: query.projectSlug,
-                projectUuid: query.projectUuid,
-              },
-            }),
-          create: (input) =>
-            request("POST", "/api/v1/content/newsroom/setups", {
-              body: createNewsroomSetupSchema.parse(input),
-            }),
-          get: (setupId) =>
-            request(
-              "GET",
-              `/api/v1/content/newsroom/setups/${encodeURIComponent(String(setupId))}`,
-            ),
-          apply: (setupId, input) =>
-            request(
-              "POST",
-              `/api/v1/content/newsroom/setups/${encodeURIComponent(String(setupId))}/apply`,
-              { body: applyNewsroomSetupSchema.parse(input ?? {}) },
-            ),
-          dismiss: (setupId) =>
-            request(
-              "POST",
-              `/api/v1/content/newsroom/setups/${encodeURIComponent(String(setupId))}/dismiss`,
-            ),
-        },
-      },
-    },
     analytics: {
       property: {
         get: (query) =>
@@ -500,8 +355,7 @@ export function createClient(options: CreateClientOptions = {}): PromptEdenClien
             retries: 0,
           }),
         // retries: 0 — the response carries a one-time raw key; never
-        // auto-refire a rotation (Wells key custody). A caller-driven retry
-        // is a fresh rotation, self-healing via the overlap window.
+        // auto-refire a rotation. A caller-driven retry is a fresh rotation.
         rotateKey: (input) =>
           request("POST", "/api/v1/analytics/property/key/rotate", {
             body: rotateAnalyticsPropertyKeySchema.parse(input),
@@ -584,25 +438,7 @@ export function createClient(options: CreateClientOptions = {}): PromptEdenClien
           ),
       },
     },
-    displacementScan: {
-      preview: (payload) =>
-        payload === undefined
-          ? request("GET", "/api/v1/displacement-scan/preview")
-          : request("POST", "/api/v1/displacement-scan/preview", {
-              body: payload,
-            }),
-    },
     agent: {
-      signUp: (input) =>
-        request("POST", "/api/v1/agent/sign-up", {
-          body: agentSignUpSchema.parse(input),
-          requiresAuth: false,
-        }),
-      signIn: (input) =>
-        request("POST", "/api/v1/agent/sign-in", {
-          body: agentSignInSchema.parse(input),
-          requiresAuth: false,
-        }),
       status: () => request("GET", "/api/v1/agent/status"),
     },
   };

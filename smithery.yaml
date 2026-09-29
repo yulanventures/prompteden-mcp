@@ -26,7 +26,9 @@ startCommand:
       promptedenBaseUrl:
         type: string
         title: PromptEden base URL
-        description: Optional API base URL. Defaults to https://app.prompteden.com.
+        description: Optional. Must be https://app.prompteden.com. Any other origin is rejected by the server.
+        enum:
+          - https://app.prompteden.com
         default: https://app.prompteden.com
   commandFunction: |
     (config) => ({

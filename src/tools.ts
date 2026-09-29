@@ -1,9 +1,5 @@
 /**
- * Shared PromptEden MCP tool registry.
- *
- * Stdio and hosted Streamable HTTP servers both register this exact tool
- * surface so names, descriptions, input schemas, output schemas, annotations,
- * and REST-client handler wiring do not drift.
+ * PromptEden MCP tool registry for the stdio server.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -13,28 +9,15 @@ import { z } from "zod";
 import {
   createProjectSchema,
   addAnalyticsPropertyHostSchema,
-  createTopicSchema,
-  generateArticleSchema,
-  regenerateArticleSchema,
-  applyNewsroomSetupSchema,
-  agentSignUpSchema,
-  agentSignInSchema,
-  updateArticleSchema,
-  updateTopicSchema,
   createClient,
   type PromptEdenClient,
   type CreateMonitorInput,
   type CreateProjectInput,
-  type CreateTopicInput,
-  type GenerateArticleInput,
-  type RegenerateArticleInput,
-  type CreateNewsroomSetupInput,
-  type ApplyNewsroomSetupInput,
-  type AgentSignUpInput,
-  type AgentSignInInput,
-  type UpdateArticleInput,
-  type UpdateTopicInput,
 } from "./api-client/index.js";
+import {
+  isExcludedMonitorProviderKey,
+  visibleMonitorProviders,
+} from "./monitor-providers.js";
 
 export const DEFAULT_BASE_URL = "https://app.prompteden.com";
 
@@ -43,17 +26,11 @@ export const DEFAULT_BASE_URL = "https://app.prompteden.com";
 export const SERVER_VERSION = "0.3.0";
 
 export const SERVER_INSTRUCTIONS =
-  "PromptEden MCP server. Exposes tools for PromptEden accounts, projects, monitors, " +
-  "monitor results, and the content engine (topics/articles/newsroom setup plans) over the /api/v1 REST API. " +
-  "Onboarding: if you do not have a key yet, call agent_sign_up (no API key required) to " +
-  "mint one, set the returned apiKey as the PROMPTEDEN_API_KEY environment variable, then " +
-  "use the other tools. For existing human accounts, do not ask for passwords: ask the " +
-  "owner/admin to create a key at Settings > API Keys, or use hosted OAuth. " +
-  "agent_status reports the authenticated key. Hosted write tools return approval_required " +
-  "with a browser deep-link; use check_approval to poll the result after a human decides. " +
-  "Every normal tool except agent_sign_up requires PROMPTEDEN_API_KEY. agent_sign_in is " +
-  "compatibility-only for explicitly human-supplied credentials. Tool-execution failures (API errors, missing " +
-  "key, invalid input) come back as tool results with isError:true, not protocol errors.";
+  "PromptEden MCP server. Exposes tools for accounts, projects, monitors, monitor results, " +
+  "and site analytics. Create an account on the web, then set PROMPTEDEN_API_KEY to an API key " +
+  "from Settings > API Keys. The server does not store the key. PROMPTEDEN_BASE_URL, when set, " +
+  "must be https://app.prompteden.com. Every tool requires that API key. Tool-execution failures " +
+  "(API errors, missing key, invalid input) come back as tool results with isError:true, not protocol errors.";
 
 // An identifier path/query param that the REST API accepts as either a numeric
 // id or its string form (UUIDs and numeric strings both flow through).
@@ -66,13 +43,7 @@ export const PROMPTEDEN_MCP_TOOL_SCOPES = {
   list_providers: ["providers:read"],
   list_projects: ["projects:read"],
   get_project: ["projects:read"],
-  content_list_topics: ["topics:read"],
-  content_list_articles: ["content:read"],
-  content_get_article: ["content:read"],
-  newsroom_setup_get: ["content:read"],
-  preview_displacement_scan: ["displacement:read"],
   agent_status: ["account:read"],
-  check_approval: ["account:read"],
   analytics_get_property: ["analytics:read"],
   analytics_get_verification: ["analytics:read"],
   analytics_get_traffic: ["analytics:read"],
@@ -80,24 +51,12 @@ export const PROMPTEDEN_MCP_TOOL_SCOPES = {
   analytics_list_goals: ["analytics:read"],
   create_monitor: ["monitors:write"],
   create_project: ["projects:write"],
-  content_create_topic: ["topics:write"],
-  content_update_topic: ["topics:write"],
-  content_generate_article: ["content:write"],
-  content_update_article: ["content:write"],
-  content_publish_article: ["content:write"],
-  article_fix: ["content:write"],
-  article_regenerate: ["content:write"],
-  newsroom_setup_propose: ["content:write"],
-  newsroom_setup_apply: ["content:write"],
-  newsroom_setup_dismiss: ["content:write"],
   analytics_create_property: ["analytics:write"],
   analytics_add_property_host: ["analytics:write"],
   analytics_rotate_key: ["analytics:write"],
   analytics_verify_property: ["analytics:write"],
   analytics_create_goal: ["analytics:write"],
   analytics_archive_goal: ["analytics:write"],
-  agent_sign_up: [],
-  agent_sign_in: [],
 } as const;
 
 export type PromptEdenMcpToolName = keyof typeof PROMPTEDEN_MCP_TOOL_SCOPES;
@@ -135,38 +94,8 @@ export const PROMPTEDEN_MCP_TOOL_DEFINITIONS: readonly PromptEdenMcpToolDefiniti
       readOnly: true,
     },
     {
-      name: "content_list_topics",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.content_list_topics,
-      readOnly: true,
-    },
-    {
-      name: "content_list_articles",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.content_list_articles,
-      readOnly: true,
-    },
-    {
-      name: "content_get_article",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.content_get_article,
-      readOnly: true,
-    },
-    {
-      name: "newsroom_setup_get",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.newsroom_setup_get,
-      readOnly: true,
-    },
-    {
-      name: "preview_displacement_scan",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.preview_displacement_scan,
-      readOnly: true,
-    },
-    {
       name: "agent_status",
       requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.agent_status,
-      readOnly: true,
-    },
-    {
-      name: "check_approval",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.check_approval,
       readOnly: true,
     },
     {
@@ -205,56 +134,6 @@ export const PROMPTEDEN_MCP_TOOL_DEFINITIONS: readonly PromptEdenMcpToolDefiniti
       readOnly: false,
     },
     {
-      name: "content_create_topic",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.content_create_topic,
-      readOnly: false,
-    },
-    {
-      name: "content_update_topic",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.content_update_topic,
-      readOnly: false,
-    },
-    {
-      name: "content_generate_article",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.content_generate_article,
-      readOnly: false,
-    },
-    {
-      name: "content_update_article",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.content_update_article,
-      readOnly: false,
-    },
-    {
-      name: "content_publish_article",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.content_publish_article,
-      readOnly: false,
-    },
-    {
-      name: "article_fix",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.article_fix,
-      readOnly: false,
-    },
-    {
-      name: "article_regenerate",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.article_regenerate,
-      readOnly: false,
-    },
-    {
-      name: "newsroom_setup_propose",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.newsroom_setup_propose,
-      readOnly: false,
-    },
-    {
-      name: "newsroom_setup_apply",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.newsroom_setup_apply,
-      readOnly: false,
-    },
-    {
-      name: "newsroom_setup_dismiss",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.newsroom_setup_dismiss,
-      readOnly: false,
-    },
-    {
       name: "analytics_add_property_host",
       requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.analytics_add_property_host,
       readOnly: false,
@@ -284,23 +163,7 @@ export const PROMPTEDEN_MCP_TOOL_DEFINITIONS: readonly PromptEdenMcpToolDefiniti
       requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.analytics_archive_goal,
       readOnly: false,
     },
-    {
-      name: "agent_sign_up",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.agent_sign_up,
-      readOnly: false,
-    },
-    {
-      name: "agent_sign_in",
-      requiredScopes: PROMPTEDEN_MCP_TOOL_SCOPES.agent_sign_in,
-      readOnly: false,
-    },
   ];
-
-export const HOSTED_MCP_DISABLED_TOOL_NAMES = new Set(
-  PROMPTEDEN_MCP_TOOL_DEFINITIONS.filter(
-    (definition) => !definition.readOnly,
-  ).map((definition) => definition.name),
-);
 
 export function getPromptEdenMcpToolRequiredScopes(
   toolName: string,
@@ -405,22 +268,8 @@ export type PromptEdenMcpToolDefinition = {
   readOnly: boolean;
 };
 
-export type DisabledToolHandler = (
-  toolName: PromptEdenMcpToolName,
-  args: ToolArgs,
-  extra: PromptEdenMcpToolExtra | undefined,
-) => Promise<PromptEdenMcpToolResult> | PromptEdenMcpToolResult;
-
-export type ApprovalStatusHandler = (
-  args: { approvalId: number },
-  extra: PromptEdenMcpToolExtra | undefined,
-) => Promise<PromptEdenMcpToolResult> | PromptEdenMcpToolResult;
-
 export type RegisterPromptEdenToolsOptions = {
   getClient?: PromptEdenClientProvider;
-  disabledToolNames?: ReadonlySet<string>;
-  disabledToolHandler?: DisabledToolHandler;
-  approvalStatusHandler?: ApprovalStatusHandler;
 };
 
 export function createEnvPromptEdenClientProvider(): PromptEdenClientProvider {
@@ -437,50 +286,35 @@ export function createEnvPromptEdenClientProvider(): PromptEdenClientProvider {
   };
 }
 
-export function notYetEnabledToolResult(toolName: string): PromptEdenMcpToolResult {
-  const payload = {
-    error: "not_yet_enabled",
-    tool: toolName,
-    message:
-      "This hosted MCP tool is not enabled on the approval-gated write surface.",
-  };
-
-  return {
-    ...textResult(payload),
-    isError: true,
-  };
-}
-
 type ToolRegistrar = {
   registerTool: unknown;
 };
 
+function creditNote(name: string): string {
+  if (name === "create_monitor") {
+    return " This starts recurring metered runs and uses credits.";
+  }
+  return " Does not use credits.";
+}
+
 function createRegisterTool(
   server: ToolRegistrar,
-  options: RegisterPromptEdenToolsOptions,
 ): (
   name: string,
   config: ToolConfig,
   handler: (args: ToolArgs) => Promise<PromptEdenMcpToolResult>,
 ) => void {
   return (name, config, handler) => {
+    const advertised = {
+      ...config,
+      description: config.description.includes("uses credits")
+        ? config.description
+        : `${config.description}${creditNote(name)}`,
+    };
     const wrapped = async (
       args: ToolArgs,
       extra: PromptEdenMcpToolExtra | undefined,
-    ) =>
-      toolExtraStorage.run(extra, async () => {
-        if (options.disabledToolNames?.has(name)) {
-          return options.disabledToolHandler
-            ? options.disabledToolHandler(
-                name as PromptEdenMcpToolName,
-                args,
-                extra,
-              )
-            : notYetEnabledToolResult(name);
-        }
-
-        return handler(args);
-      });
+    ) => toolExtraStorage.run(extra, async () => handler(args));
 
     (
       server.registerTool as unknown as (
@@ -488,7 +322,7 @@ function createRegisterTool(
         c: unknown,
         h: unknown,
       ) => unknown
-    )(name, config, wrapped);
+    )(name, advertised, wrapped);
   };
 }
 
@@ -499,7 +333,7 @@ export function registerPromptEdenTools(
   const clientProvider =
     options.getClient ?? createEnvPromptEdenClientProvider();
   const getClient = () => clientProvider(toolExtraStorage.getStore());
-  const registerTool = createRegisterTool(server, options);
+  const registerTool = createRegisterTool(server);
 
   // ---------------------------------------------------------------------------
   // Read tools (GET). readOnlyHint:true, idempotentHint:true. The three most
@@ -583,8 +417,8 @@ export function registerPromptEdenTools(
     {
       title: "List monitor providers",
       description:
-        "List the AI/agent providers available for monitors (search engines + agent coding harnesses), " +
-        "with key/name/category/costTier. Use the key when creating a monitor target. Requires monitors:read.",
+        "List the answer engines available for monitors, with key, name, category, and costTier. " +
+        "Coding-agent providers are omitted. Use a returned key when creating a monitor target.",
       inputSchema: {},
       outputSchema: {
         // key/name are always present; the rest are tolerant (a future provider
@@ -610,7 +444,16 @@ export function registerPromptEdenTools(
         openWorldHint: true,
       },
     },
-    async () => structuredResult(await getClient().providers.list()),
+    async () => {
+      const payload = await getClient().providers.list();
+      if (!isRecord(payload) || !Array.isArray(payload.providers)) {
+        return structuredResult(payload);
+      }
+      return structuredResult({
+        ...payload,
+        providers: visibleMonitorProviders(payload.providers),
+      });
+    },
   );
 
   registerTool(
@@ -649,141 +492,6 @@ export function registerPromptEdenTools(
       textResult(await getClient().projects.get(projectId)),
   );
 
-  registerTool(
-    "content_list_topics",
-    {
-      title: "List content topics",
-      description:
-        "List content topics for a project via GET /api/v1/content/topics. Supply projectId " +
-        "or projectUuid (at least one). Requires content:read scope.",
-      inputSchema: {
-        projectId: z.number().optional(),
-        projectUuid: z.string().min(1).optional(),
-      },
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async ({ projectId, projectUuid }) =>
-      textResult(
-        await getClient().content.topics.list({ projectId, projectUuid }),
-      ),
-  );
-
-  registerTool(
-    "content_list_articles",
-    {
-      title: "List content articles",
-      description:
-        "List generated content articles for a project via GET /api/v1/content/articles. Supply " +
-        "projectId or projectUuid (at least one). Requires content:read scope.",
-      inputSchema: {
-        projectId: z.number().optional(),
-        projectUuid: z.string().min(1).optional(),
-      },
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async ({ projectId, projectUuid }) =>
-      textResult(
-        await getClient().content.articles.list({ projectId, projectUuid }),
-      ),
-  );
-
-  registerTool(
-    "content_get_article",
-    {
-      title: "Get content article",
-      description:
-        "Get a single content article by id or UUID via GET /api/v1/content/articles/:articleId. " +
-        "Article generation is ASYNC: after content_generate_article returns, poll this tool and " +
-        "read the `status` field (and the `job` object: { step, status, attempt, error }) until " +
-        "generation completes before approving or publishing. Requires content:read scope.",
-      inputSchema: {
-        articleId: idSchema.describe("Article id or UUID."),
-      },
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async ({ articleId }) =>
-      textResult(await getClient().content.articles.get(articleId)),
-  );
-
-  registerTool(
-    "newsroom_setup_get",
-    {
-      title: "Get newsroom setup",
-      description:
-        "Get a newsroom setup by numeric id or UUID, or omit setupId and supply a projectId, " +
-        "projectSlug, or projectUuid to get that project's latest durable setup run. The setup " +
-        "contains the researched, reviewable writers/beats/cadence/cost plan. Requires content:read scope.",
-      inputSchema: {
-        setupId: idSchema.optional().describe("Setup id or UUID. Omit to get the latest setup for a project."),
-        projectId: z.number().int().positive().optional(),
-        projectSlug: z.string().trim().min(1).max(160).optional(),
-        projectUuid: z.string().uuid().optional(),
-      },
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async ({ setupId, projectId, projectSlug, projectUuid }) =>
-      textResult(
-        setupId !== undefined
-          ? await getClient().content.newsroom.setups.get(setupId)
-          : await getClient().content.newsroom.setups.list({
-              projectId,
-              projectSlug,
-              projectUuid,
-            }),
-      ),
-  );
-
-  registerTool(
-    "preview_displacement_scan",
-    {
-      title: "Preview displacement scan",
-      description:
-        "Evaluate the deterministic displacement-scan preview fixture (no args) or a supplied " +
-        "strict payload. Read-only evaluation; nothing is persisted.",
-      inputSchema: {
-        brand: z.string().optional(),
-        competitors: z.array(z.string()).optional(),
-        prompt: z.string().optional(),
-        answer: z.record(z.unknown()).optional(),
-      },
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async (args) => {
-      const hasPayload = Object.values(args).some(
-        (value) => value !== undefined,
-      );
-      return textResult(
-        hasPayload
-          ? await getClient().displacementScan.preview(args)
-          : await getClient().displacementScan.preview(),
-      );
-    },
-  );
 
   registerTool(
     "agent_status",
@@ -806,42 +514,6 @@ export function registerPromptEdenTools(
     async () => structuredResult(await getClient().agent.status()),
   );
 
-  registerTool(
-    "check_approval",
-    {
-      title: "Check approval",
-      description:
-        "Check the status and execution result for a hosted approval returned by an approval_required write proposal.",
-      inputSchema: {
-        approvalId: z.number().int().positive().describe("Approval id returned by a write proposal."),
-      },
-      outputSchema: {
-        approvalId: z.number().optional(),
-        status: z.string(),
-        result: z.unknown().optional(),
-        error: z.unknown().optional(),
-      },
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async ({ approvalId }) => {
-      if (options.approvalStatusHandler) {
-        return options.approvalStatusHandler({ approvalId }, toolExtraStorage.getStore());
-      }
-
-      return {
-        ...structuredResult({
-          status: "not_configured",
-          message: "Approval polling is available only on the hosted PromptEden MCP endpoint.",
-        }),
-        isError: true,
-      };
-    },
-  );
 
   // ---------------------------------------------------------------------------
   // Analytics agent surface. Honesty contract: the collector state enum has
@@ -849,8 +521,7 @@ export function registerPromptEdenTools(
   // healthy_data | stale | failed) and passes through verbatim; `totals: null`
   // in the traffic report means "no basis to report" — never render it as
   // zeros. The raw siteKey appears ONLY in the create/rotate results, exactly
-  // once, in a single field; those two tools are disabled on the hosted
-  // endpoint (approval history must never hold a raw key).
+  // once, in a single field. The server does not store that key.
   // ---------------------------------------------------------------------------
 
   // Two unambiguous targeting shapes — pass EITHER propertyId alone OR one
@@ -1090,7 +761,7 @@ export function registerPromptEdenTools(
     {
       title: "Add analytics property host",
       description:
-        "Add a public collection hostname via PATCH /api/v1/analytics/property. Target by propertyId alone. Keeps the canonical host and site key. Hosted MCP requires approval.",
+        "Add a public collection hostname via PATCH /api/v1/analytics/property. Target by propertyId alone. Keeps the canonical host and site key.",
       inputSchema: addAnalyticsPropertyHostSchema.shape,
       annotations: {
         readOnlyHint: false,
@@ -1115,7 +786,7 @@ export function registerPromptEdenTools(
         "Create the analytics property for a project via POST /api/v1/analytics/property and receive the site key " +
         "for the tracking snippet. The siteKey field in the result is shown EXACTLY ONCE — install it immediately; " +
         "it cannot be re-read (recovery: analytics_rotate_key mints a fresh one). " +
-        "409 property_exists (with propertyId) if the project already has a property. Disabled on the hosted endpoint.",
+        "409 property_exists (with propertyId) if the project already has a property.",
       inputSchema: {
         ...analyticsCreateInputSchema,
         hostname: z
@@ -1148,7 +819,7 @@ export function registerPromptEdenTools(
         "propertyId ALONE (primary), or a project reference plus expectedPropertyId (409 analytics_property_changed " +
         "on mismatch). The new siteKey is shown EXACTLY ONCE; the old key keeps working through overlapExpiresAt. " +
         "NOT idempotent and never auto-retried: a manual retry performs a fresh rotation (safe — install the latest " +
-        "returned key). Disabled on the hosted endpoint.",
+        "returned key).",
       inputSchema: {
         ...analyticsProjectInputSchema,
         expectedPropertyId: z
@@ -1219,7 +890,8 @@ export function registerPromptEdenTools(
       title: "Create monitor",
       description:
         "Create a PromptEden monitor via POST /api/v1/monitors. Requires projectSlug or projectId. " +
-        "Defaults: type='search', language='en', country='US' (applied by the shared client).",
+        "Defaults: type='search', language='en', country='US' (applied by the shared client). " +
+        "Coding-agent provider keys are rejected.",
       // create_monitor's shared schema is a refined object (projectSlug OR
       // projectId), which has no JSON-Schema representation; advertise the field
       // shape here and let the shared createMonitorSchema enforce the refinement
@@ -1262,8 +934,28 @@ export function registerPromptEdenTools(
         openWorldHint: true,
       },
     },
-    async (args) =>
-      textResult(await getClient().monitors.create(args as CreateMonitorInput)),
+    async (args) => {
+      const targets = Array.isArray(args.targets) ? args.targets : [];
+      const rejected = targets
+        .map((target) => String(target?.providerKey ?? ""))
+        .filter((key) => isExcludedMonitorProviderKey(key));
+      if (rejected.length > 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `providerKey ${rejected.join(", ")} is not available. ` +
+                "Call list_providers and choose a key from that list.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      return textResult(
+        await getClient().monitors.create(args as CreateMonitorInput),
+      );
+    },
   );
 
   registerTool(
@@ -1283,300 +975,5 @@ export function registerPromptEdenTools(
       textResult(await getClient().projects.create(args as CreateProjectInput)),
   );
 
-  registerTool(
-    "content_create_topic",
-    {
-      title: "Create content topic",
-      description:
-        "Create a content topic via POST /api/v1/content/topics. Requires content:write scope.",
-      inputSchema: createTopicSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async (args) =>
-      textResult(
-        await getClient().content.topics.create(args as CreateTopicInput),
-      ),
-  );
 
-  registerTool(
-    "content_update_topic",
-    {
-      title: "Update content topic (review state)",
-      description:
-        "Update a content topic review state via PATCH /api/v1/content/topics/:topicId. status is " +
-        "one of approved | rejected | archived | suggested; rejectedReason is optional. Idempotent. " +
-        "Requires content:write scope.",
-      // Reuse the shared status enum + rejectedReason field so the accepted values
-      // never drift from the client/server validators.
-      inputSchema: {
-        topicId: idSchema.describe("Topic id."),
-        status: updateTopicSchema.shape.status,
-        rejectedReason: updateTopicSchema.shape.rejectedReason,
-      },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async ({ topicId, ...patch }) =>
-      textResult(
-        await getClient().content.topics.update(
-          topicId,
-          patch as UpdateTopicInput,
-        ),
-      ),
-  );
-
-  registerTool(
-    "content_generate_article",
-    {
-      title: "Generate content article",
-      description:
-        "Generate a content article from a topic via POST /api/v1/content/articles. Generation is " +
-        "ASYNC — this returns immediately; poll content_get_article and read its `status`/`job` " +
-        "fields until it completes. Requires content:write scope.",
-      inputSchema: generateArticleSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async (args) =>
-      textResult(
-        await getClient().content.articles.generate(
-          args as GenerateArticleInput,
-        ),
-      ),
-  );
-
-  registerTool(
-    "content_update_article",
-    {
-      title: "Update content article (review state)",
-      description:
-        "Update a content article review state via PATCH /api/v1/content/articles/:articleId. status " +
-        "is one of approved | draft | archived. NOTE: publishing is a separate tool " +
-        "(content_publish_article), not a status. Idempotent. Requires content:write scope.",
-      // Reuse the shared updateArticleSchema (status enum) and add the path param;
-      // .extend preserves the schema's passthrough so newly-added server fields
-      // are not silently dropped.
-      inputSchema: updateArticleSchema.extend({ articleId: idSchema }),
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async (args) => {
-      const { articleId, ...patch } = args as {
-        articleId: number | string;
-      } & UpdateArticleInput;
-      return textResult(
-        await getClient().content.articles.update(articleId, patch),
-      );
-    },
-  );
-
-  registerTool(
-    "content_publish_article",
-    {
-      title: "Publish content article",
-      description:
-        "Publish an approved content article via POST /api/v1/content/articles/:articleId/publish. " +
-        "Requires content:write scope.",
-      inputSchema: {
-        articleId: idSchema.describe("Article id."),
-      },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ articleId }) =>
-      textResult(await getClient().content.articles.publish(articleId)),
-  );
-
-  registerTool(
-    "article_fix",
-    {
-      title: "Fix content article",
-      description:
-        "Surgically repair an article from its stored validation findings via POST " +
-        "/api/v1/content/articles/:articleId/fix. The repair is asynchronous and does not " +
-        "publish the article. Requires content:write scope.",
-      inputSchema: {
-        articleId: idSchema.describe("Article id."),
-      },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ articleId }) =>
-      textResult(await getClient().content.articles.fix(articleId)),
-  );
-
-  registerTool(
-    "article_regenerate",
-    {
-      title: "Regenerate content article",
-      description:
-        "Regenerate an article with optional editor feedback via POST " +
-        "/api/v1/content/articles/:articleId/regenerate. Generation is asynchronous. " +
-        "Requires content:write scope.",
-      inputSchema: regenerateArticleSchema.extend({
-        articleId: idSchema.describe("Article id."),
-      }),
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async (args) => {
-      const { articleId, ...input } = args as {
-        articleId: number | string;
-      } & RegenerateArticleInput;
-      return textResult(
-        await getClient().content.articles.regenerate(articleId, input),
-      );
-    },
-  );
-
-  registerTool(
-    "newsroom_setup_propose",
-    {
-      title: "Propose newsroom setup",
-      description:
-        "Start a durable agentic run that researches a goal and drafts a reviewable newsroom plan " +
-        "covering writers, beats, cadence, and cost. Nothing is hired until newsroom_setup_apply. " +
-        "Requires one project reference and content:write scope; newsroom_setup_in_flight is a 409.",
-      inputSchema: {
-        projectId: z.number().int().positive().optional(),
-        projectSlug: z.string().trim().min(1).max(160).optional(),
-        projectUuid: z.string().uuid().optional(),
-        goal: z.string().trim().min(1).max(500),
-      },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async (args) =>
-      textResult(
-        await getClient().content.newsroom.setups.create(
-          args as CreateNewsroomSetupInput,
-        ),
-      ),
-  );
-
-  registerTool(
-    "newsroom_setup_apply",
-    {
-      title: "Apply newsroom setup",
-      description:
-        "Hire selected writers from a ready newsroom plan, or omit writerIndexes to hire the full plan. " +
-        "Nothing is created before this call. Requires content:write scope; in-flight, not-applicable, " +
-        "and seat-upgrade errors are returned as newsroom_setup_* API errors.",
-      inputSchema: applyNewsroomSetupSchema.extend({
-        setupId: idSchema.describe("Setup id or UUID."),
-      }),
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async (args) => {
-      const { setupId, ...input } = args as {
-        setupId: number | string;
-      } & ApplyNewsroomSetupInput;
-      return textResult(
-        await getClient().content.newsroom.setups.apply(setupId, input),
-      );
-    },
-  );
-
-  registerTool(
-    "newsroom_setup_dismiss",
-    {
-      title: "Dismiss newsroom setup",
-      description:
-        "Dismiss a ready or failed newsroom setup without hiring its writers. Requires content:write scope.",
-      inputSchema: {
-        setupId: idSchema.describe("Setup id or UUID."),
-      },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ setupId }) =>
-      textResult(await getClient().content.newsroom.setups.dismiss(setupId)),
-  );
-
-  // ---------------------------------------------------------------------------
-  // Agent onboarding. sign-up mints an API key and runs WITHOUT
-  // PROMPTEDEN_API_KEY (requiresAuth:false in the client). sign-in remains for
-  // compatibility. Existing accounts should use Settings > API Keys or OAuth
-  // instead of password collection. agent_status (read, above) requires the key.
-  // ---------------------------------------------------------------------------
-
-  registerTool(
-    "agent_sign_up",
-    {
-      title: "Agent sign up",
-      description:
-        "Mint a PromptEden API key for a new agent. Works without PROMPTEDEN_API_KEY. Returns the new " +
-        "apiKey — set it as PROMPTEDEN_API_KEY to use every other tool.",
-      inputSchema: agentSignUpSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async (args) =>
-      textResult(await getClient().agent.signUp(args as AgentSignUpInput)),
-  );
-
-  registerTool(
-    "agent_sign_in",
-    {
-      title: "Agent sign in",
-      description:
-        "Compatibility-only: mint a PromptEden API key for an existing account when the human explicitly provided credentials. " +
-        "For an existing account, do not ask for a password; use Settings > API Keys or hosted OAuth instead.",
-      inputSchema: agentSignInSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async (args) =>
-      textResult(await getClient().agent.signIn(args as AgentSignInInput)),
-  );
 }

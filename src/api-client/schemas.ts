@@ -1,7 +1,6 @@
 /**
- * Zod schemas for PromptEden write payloads and agent onboarding request
- * bodies. Monitor defaults (type='search', language='en', country='US') are
- * applied here before the request is sent.
+ * Zod schemas for PromptEden write payloads. Monitor defaults (type='search',
+ * language='en', country='US') are applied here before the request is sent.
  *
  * `*Input` types are `z.input` (defaults optional for callers); the schemas
  * apply the defaults when parsed before the request is sent.
@@ -52,93 +51,8 @@ export const createProjectSchema = z
   })
   .passthrough();
 
-/** POST /api/v1/content/topics payload. */
-export const createTopicSchema = z
-  .object({
-    projectId: z.number(),
-    primaryKeyword: z.string().min(1),
-    title: z.string().min(1).optional(),
-    notes: z.string().min(1).optional(),
-  })
-  .passthrough();
-
-/** POST /api/v1/content/articles payload. */
-export const generateArticleSchema = z
-  .object({
-    projectId: z.number(),
-    topicId: z.number(),
-  })
-  .passthrough();
-
-/** POST /api/v1/content/articles/:articleId/regenerate payload. */
-export const regenerateArticleSchema = z.object({
-  feedback: z.string().trim().max(4000).optional(),
-});
-
 /**
- * PATCH /api/v1/content/articles/:articleId payload — the article review-state
- * transition. Status values mirror the server's updateArticleStatusSchema
- * exactly (lib/content-engine/validators.ts): approved | draft | archived.
- * NOTE: publishing is a separate POST .../publish route, not a PATCH status.
- */
-export const updateArticleSchema = z
-  .object({
-    status: z.enum(['approved', 'draft', 'archived']),
-  })
-  .passthrough();
-
-/**
- * PATCH /api/v1/content/topics/:topicId payload — the topic review-state
- * transition. Status values mirror the server's updateTopicStatusSchema:
- * approved | rejected | archived | suggested. rejectedReason is optional.
- */
-export const updateTopicSchema = z
-  .object({
-    status: z.enum(['approved', 'rejected', 'archived', 'suggested']),
-    rejectedReason: z.string().min(1).optional(),
-  })
-  .passthrough();
-
-/** POST /api/v1/content/newsroom/setups payload. */
-export const createNewsroomSetupSchema = z
-  .object({
-    projectId: z.number().int().positive().optional(),
-    projectSlug: z.string().trim().min(1).max(160).optional(),
-    projectUuid: z.string().uuid().optional(),
-    goal: z.string().trim().min(1).max(500),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      value.projectId !== undefined ||
-      value.projectSlug !== undefined ||
-      value.projectUuid !== undefined,
-    { message: 'A projectId, projectSlug, or projectUuid is required.' },
-  );
-
-/** POST /api/v1/content/newsroom/setups/:setupId/apply payload. */
-export const applyNewsroomSetupSchema = z
-  .object({
-    writerIndexes: z.array(z.number().int().min(0)).max(20).optional(),
-  })
-  .strict();
-
-/** POST /api/v1/agent/sign-up payload (no API key required). */
-export const agentSignUpSchema = z.object({
-  humanEmail: z.string().email(),
-  agentName: z.string().trim().min(2).max(80),
-  websiteUrl: z.string().trim().min(1).max(2048).optional(),
-}).strict();
-
-/** POST /api/v1/agent/sign-in payload (no API key required). */
-export const agentSignInSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8).max(100),
-  keyName: z.string().trim().min(1).max(100).optional(),
-});
-
-/**
- * Analytics agent-surface payloads. Reads take projectId/projectUuid as query
+ * Analytics write payloads. Reads take projectId/projectUuid as query
  * params (no schema needed); these cover the write bodies.
  */
 export const addAnalyticsPropertyHostSchema = z
@@ -245,12 +159,6 @@ export type CreateMonitorInput = z.input<typeof createMonitorSchema>;
 export type CreateMonitorPayload = z.output<typeof createMonitorSchema>;
 
 export type CreateProjectInput = z.input<typeof createProjectSchema>;
-export type CreateTopicInput = z.input<typeof createTopicSchema>;
-export type GenerateArticleInput = z.input<typeof generateArticleSchema>;
-export type RegenerateArticleInput = z.input<typeof regenerateArticleSchema>;
-
-export type UpdateArticleInput = z.input<typeof updateArticleSchema>;
-export type UpdateTopicInput = z.input<typeof updateTopicSchema>;
 
 /**
  * Analytics AI-traffic marker. `false` means withheld / not measured — numeric
@@ -335,8 +243,3 @@ export type StartAnalyticsVerificationInput = z.input<
 export type CreateAnalyticsGoalInput = z.input<
   typeof createAnalyticsGoalSchema
 >;
-export type CreateNewsroomSetupInput = z.input<typeof createNewsroomSetupSchema>;
-export type ApplyNewsroomSetupInput = z.input<typeof applyNewsroomSetupSchema>;
-
-export type AgentSignUpInput = z.input<typeof agentSignUpSchema>;
-export type AgentSignInInput = z.input<typeof agentSignInSchema>;

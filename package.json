@@ -1,7 +1,7 @@
 {
   "name": "@prompteden/mcp-server",
   "version": "0.3.0",
-  "description": "MCP server that lets Claude, Codex, Cursor and other MCP clients read your PromptEden data: projects, monitors, captured answers, and analytics.",
+  "description": "Stdio MCP server for PromptEden projects, monitors, captured answers, and analytics.",
   "mcpName": "io.github.yulanventures/prompteden-mcp",
   "license": "MIT",
   "type": "module",

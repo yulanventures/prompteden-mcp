@@ -9,6 +9,10 @@ import {
   createClient,
   analyticsNativeOutputHealthSchema,
 } from "./index.js";
+import {
+  isExcludedMonitorProviderKey,
+  visibleMonitorProviders,
+} from "../monitor-providers.js";
 import { ApiError } from './errors.js';
 
 type Call = { url: string; init: RequestInit };
@@ -97,199 +101,76 @@ test('a final non-ok throws ApiError carrying status, body, and path', async () 
   );
 });
 
-test('agent.signUp works with NO apiKey; account.get without a key throws a clear error', async () => {
-  const { fetch, calls } = recordingFetch(
-    () => new Response(JSON.stringify({ status: 'created', apiKey: 'pe_test_fixture' }), { status: 201 }),
+test('account.get without a key throws a clear error', async () => {
+  const { fetch } = recordingFetch(
+    () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
   );
   const client = createClient({ fetch });
-
-  const result = await client.agent.signUp({ humanEmail: 'a@b.com', agentName: 'Example Agent' });
-  assert.deepEqual(result, { status: 'created', apiKey: 'pe_test_fixture' });
-  assert.equal(calls.length, 1);
-  assert.equal(headerValue(calls[0].init, 'Authorization'), undefined);
-
-  await assert.rejects(() => client.account.get(), /API key required/);
+  await assert.rejects(
+    () => client.account.get(),
+    /API key required[\s\S]*Settings > API Keys/,
+  );
 });
 
-test('projects.get and articles.get issue GETs to the id-scoped path (number or uuid)', async () => {
+test('projects.get issues a GET to the id-scoped path', async () => {
   const { fetch, calls } = recordingFetch(
     () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
   );
   const client = createClient({ apiKey: 'k-test', fetch });
 
   await client.projects.get(42);
-  await client.content.articles.get('11111111-2222-4333-8444-555555555555');
+  await client.projects.get('11111111-2222-4333-8444-555555555555');
 
   assert.equal(calls.length, 2);
   assert.equal(calls[0].init.method, 'GET');
   assert.match(calls[0].url, /\/api\/v1\/projects\/42$/);
+  assert.match(calls[0].url, /^https:\/\/app\.prompteden\.com\//);
   assert.equal(calls[1].init.method, 'GET');
   assert.match(
     calls[1].url,
-    /\/api\/v1\/content\/articles\/11111111-2222-4333-8444-555555555555$/,
+    /\/api\/v1\/projects\/11111111-2222-4333-8444-555555555555$/,
   );
 });
 
-test('content list queries forward projectUuid alongside projectId', async () => {
-  const { fetch, calls } = recordingFetch(
-    () => new Response(JSON.stringify({ topics: [] }), { status: 200 }),
+test('baseUrl accepts only https://app.prompteden.com', () => {
+  const fetchImpl = (async () => new Response('null')) as typeof fetch;
+  assert.doesNotThrow(() =>
+    createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://app.prompteden.com' }),
   );
-  const client = createClient({ apiKey: 'k-test', fetch });
-
-  await client.content.topics.list({ projectUuid: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' });
-  await client.content.articles.list({ projectId: 7 });
-
-  assert.match(calls[0].url, /projectUuid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/);
-  // projectId was undefined on the first call, so it must NOT be serialized.
-  assert.ok(!/projectId=/.test(calls[0].url));
-  assert.match(calls[1].url, /projectId=7/);
-  assert.ok(!/projectUuid=/.test(calls[1].url));
-});
-
-test('newsroom setup methods cover latest, create, get, apply, and dismiss wire shapes', async () => {
-  const { fetch, calls } = recordingFetch(
-    () => new Response(JSON.stringify({ setup: { id: 12 } }), { status: 200 }),
+  assert.doesNotThrow(() =>
+    createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://app.prompteden.com/' }),
   );
-  const client = createClient({ apiKey: 'k-test', fetch });
-
-  await client.content.newsroom.setups.list({ projectSlug: 'acme' });
-  await client.content.newsroom.setups.create({
-    projectSlug: '  acme  ',
-    goal: '  Own the category  ',
-  });
-  await client.content.newsroom.setups.get('11111111-2222-4333-8444-555555555555');
-  await client.content.newsroom.setups.apply(12);
-  await client.content.newsroom.setups.apply(12, { writerIndexes: [0, 2] });
-  await client.content.newsroom.setups.dismiss(12);
-
-  assert.match(calls[0].url, /\/api\/v1\/content\/newsroom\/setups\?projectSlug=acme$/);
-  assert.equal(calls[0].init.method, 'GET');
-
-  assert.match(calls[1].url, /\/api\/v1\/content\/newsroom\/setups$/);
-  assert.equal(calls[1].init.method, 'POST');
-  assert.deepEqual(JSON.parse(String(calls[1].init.body)), {
-    projectSlug: 'acme',
-    goal: 'Own the category',
-  });
-
-  assert.match(
-    calls[2].url,
-    /\/api\/v1\/content\/newsroom\/setups\/11111111-2222-4333-8444-555555555555$/,
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'http://127.0.0.1:9' }),
+    /not allowed/,
   );
-  assert.equal(calls[2].init.method, 'GET');
-
-  assert.match(calls[3].url, /\/api\/v1\/content\/newsroom\/setups\/12\/apply$/);
-  assert.deepEqual(JSON.parse(String(calls[3].init.body)), {});
-  assert.deepEqual(JSON.parse(String(calls[4].init.body)), { writerIndexes: [0, 2] });
-
-  assert.match(calls[5].url, /\/api\/v1\/content\/newsroom\/setups\/12\/dismiss$/);
-  assert.equal(calls[5].init.method, 'POST');
-  assert.equal(calls[5].init.body, undefined);
-  assert.equal(headerValue(calls[5].init, 'Content-Type'), undefined);
-
-  for (const index of [1, 3, 4, 5]) {
-    assert.ok(
-      headerValue(calls[index].init, 'Idempotency-Key'),
-      `expected an Idempotency-Key header on call ${index}`,
-    );
-  }
-});
-
-test('newsroom setup schemas reject missing project refs and invalid writer indexes', () => {
-  const client = createClient({
-    apiKey: 'k-test',
-    fetch: recordingFetch(() => new Response('{}')).fetch,
-  });
-
-  assert.throws(() =>
-    client.content.newsroom.setups.create({ goal: 'Own the category' } as never),
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://evil.example' }),
+    /not allowed/,
   );
-  assert.throws(() =>
-    client.content.newsroom.setups.create({ projectUuid: 'not-a-uuid', goal: 'Valid goal' }),
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://app.prompteden.com.evil.example' }),
+    /not allowed/,
   );
-  assert.throws(() =>
-    client.content.newsroom.setups.apply(12, { writerIndexes: [-1] }),
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://user:pass@app.prompteden.com' }),
+    /not allowed/,
   );
-  assert.throws(() =>
-    client.content.newsroom.setups.apply(12, {
-      writerIndexes: Array.from({ length: 21 }, (_, index) => index),
-    }),
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'https://app.prompteden.com/other' }),
+    /no path/,
   );
-});
-
-test('articles.update PATCHes with an Idempotency-Key and validates the status enum', async () => {
-  const { fetch, calls } = recordingFetch(
-    () => new Response(JSON.stringify({ article: { id: 9, status: 'approved' } }), { status: 200 }),
+  assert.throws(
+    () => createClient({ apiKey: 'k-test', fetch: fetchImpl, baseUrl: 'not a url' }),
+    /valid URL/,
   );
-  const client = createClient({ apiKey: 'k-test', fetch });
-
-  const result = await client.content.articles.update(9, { status: 'approved' });
-  assert.deepEqual(result, { article: { id: 9, status: 'approved' } });
-
-  const { init, url } = calls[0];
-  assert.equal(init.method, 'PATCH');
-  assert.match(url, /\/api\/v1\/content\/articles\/9$/);
-  assert.equal(headerValue(init, 'Content-Type'), 'application/json');
-  assert.ok(headerValue(init, 'Idempotency-Key'), 'expected an Idempotency-Key header on PATCH');
-  assert.deepEqual(JSON.parse(String(init.body)), { status: 'approved' });
-
-  // 'published' is NOT a valid article review-state status (publish is a POST route).
-  assert.throws(() => client.content.articles.update(9, { status: 'published' } as never));
-});
-
-test('articles.fix and articles.regenerate POST to their action routes', async () => {
-  const { fetch, calls } = recordingFetch(
-    () => new Response(JSON.stringify({ status: 'queued' }), { status: 201 }),
-  );
-  const client = createClient({ apiKey: 'k-test', fetch });
-
-  await client.content.articles.fix('11111111-2222-4333-8444-555555555555');
-  await client.content.articles.regenerate(9);
-  await client.content.articles.regenerate(9, { feedback: '  Strengthen the evidence.  ' });
-
-  assert.match(
-    calls[0].url,
-    /\/api\/v1\/content\/articles\/11111111-2222-4333-8444-555555555555\/fix$/,
-  );
-  assert.equal(calls[0].init.method, 'POST');
-  assert.equal(calls[0].init.body, undefined);
-
-  assert.match(calls[1].url, /\/api\/v1\/content\/articles\/9\/regenerate$/);
-  assert.deepEqual(JSON.parse(String(calls[1].init.body)), {});
-  assert.deepEqual(JSON.parse(String(calls[2].init.body)), {
-    feedback: 'Strengthen the evidence.',
-  });
-  for (const call of calls) {
-    assert.ok(headerValue(call.init, 'Idempotency-Key'));
-  }
-
-  assert.throws(() =>
-    client.content.articles.regenerate(9, { feedback: 'x'.repeat(4001) }),
-  );
-});
-
-test('topics.update PATCHes, validates the status enum, and passes rejectedReason through', async () => {
-  const { fetch, calls } = recordingFetch(
-    () => new Response(JSON.stringify({ topic: { id: 3, status: 'rejected' } }), { status: 200 }),
-  );
-  const client = createClient({ apiKey: 'k-test', fetch });
-
-  await client.content.topics.update(3, { status: 'rejected', rejectedReason: 'off-brand' });
-
-  const { init, url } = calls[0];
-  assert.equal(init.method, 'PATCH');
-  assert.match(url, /\/api\/v1\/content\/topics\/3$/);
-  assert.ok(headerValue(init, 'Idempotency-Key'), 'expected an Idempotency-Key header on PATCH');
-  assert.deepEqual(JSON.parse(String(init.body)), { status: 'rejected', rejectedReason: 'off-brand' });
-
-  assert.throws(() => client.content.topics.update(3, { status: 'bogus' } as never));
 });
 
 test('providers.list GETs /api/v1/monitoring/providers and parses the { providers:[...] } shape', async () => {
   const payload = {
     providers: [
       { key: 'openai', name: 'OpenAI', category: 'search', costTier: 'standard', description: 'GPT search.' },
-      { key: 'claude-code', name: 'Claude Code', category: 'agent', costTier: 'premium', description: 'Coding harness.' },
+      { key: 'gemini', name: 'Gemini', category: 'search', costTier: 'standard', description: 'Gemini search.' },
     ],
   };
   const { fetch, calls } = recordingFetch(
@@ -308,7 +189,7 @@ test('providers.list GETs /api/v1/monitoring/providers and parses the { provider
   assert.ok(Array.isArray(result.providers));
   assert.equal(result.providers.length, 2);
   assert.equal(result.providers[0].key, 'openai');
-  assert.equal(result.providers[1].key, 'claude-code');
+  assert.equal(result.providers[1].key, 'gemini');
 });
 
 test('analytics AI marker survives SDK schema parse and keeps numeric totals', async () => {
@@ -442,4 +323,19 @@ test("SDK native output health distinguishes measured zero from unavailable and 
     }).success,
     false,
   );
+});
+
+test("monitor provider filter drops coding-agent catalog entries and known keys", () => {
+  const visible = visibleMonitorProviders([
+    { key: "openai", name: "OpenAI", category: "search" },
+    { key: "gemini", name: "Gemini", category: "search" },
+    { key: "claude-code", name: "Claude Code", category: "agent" },
+    { key: "codex", name: "Codex", category: "agent coding harnesses" },
+    { key: "other-agent", name: "Other", category: "agent" },
+    "not-a-provider",
+  ]) as { key: string }[];
+  assert.deepEqual(visible.map((provider) => provider.key), ["openai", "gemini"]);
+  assert.equal(isExcludedMonitorProviderKey("claude-code"), true);
+  assert.equal(isExcludedMonitorProviderKey("CODEX"), true);
+  assert.equal(isExcludedMonitorProviderKey("openai"), false);
 });
