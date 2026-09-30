@@ -61,7 +61,15 @@ jobs:
             exit 1
           fi
           TAG="v${EXPECTED_VERSION}"
-          REMOTE_TAG="$(git ls-remote origin "refs/tags/${TAG}^{}" | awk '{print $1}')"
+          PEELED_TAG="$(git ls-remote origin "refs/tags/${TAG}^{}" | awk '{print $1}')"
+          PLAIN_TAG="$(git ls-remote origin "refs/tags/${TAG}" | awk '{print $1}')"
+          if [ -n "$PEELED_TAG" ]; then
+            REMOTE_TAG="$PEELED_TAG"
+          elif [ -n "$PLAIN_TAG" ]; then
+            REMOTE_TAG="$PLAIN_TAG"
+          else
+            REMOTE_TAG=""
+          fi
           if [ -n "$REMOTE_TAG" ] && [ "$REMOTE_TAG" != "$GITHUB_SHA" ]; then
             echo "Remote tag $TAG points to $REMOTE_TAG, expected $GITHUB_SHA"
             exit 1
@@ -86,6 +94,10 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          if ! command -v rg >/dev/null 2>&1; then
+            echo "ripgrep (rg) is required for the content gate"
+            exit 1
+          fi
           ALLOWED_FILES="LICENSE
           README.md
           dist/index.mjs
@@ -112,29 +124,30 @@ jobs:
           test -n "$TARBALL"
           DIST_SHA256="$(sha256sum dist/index.mjs | awk '{print $1}')"
           printf '%s\n' "$DIST_SHA256" > prompteden-mcp.mjs.sha256
+          CHECKSUM_FILE_SHA256="$(sha256sum prompteden-mcp.mjs.sha256 | awk '{print $1}')"
           TARBALL_INTEGRITY="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | base64 -w 0)"
           TARBALL_SHA256="$(sha256sum "$TARBALL" | awk '{print $1}')"
           UNPACK_DIR="$(mktemp -d)"
           tar -xzf "$TARBALL" -C "$UNPACK_DIR"
           SCAN_ROOT="$UNPACK_DIR/package"
-          FOUND=0
-          report_match() {
-            echo "$1: $2 matches"
-            FOUND=1
-          }
-          scan_file() {
-            local file="$1"
-            local rel="$2"
-            local pat="$3"
-            if [ ! -f "$file" ]; then
-              return 0
-            fi
-            local count
-            count="$(rg -i -c "$pat" "$file" 2>/dev/null || true)"
-            if [ -n "$count" ] && [ "$count" -gt 0 ]; then
-              report_match "$rel" "$count"
-            fi
-          }
+          SCAN_WORK="$(mktemp -d)"
+          cp "$SCAN_ROOT/LICENSE" "$SCAN_WORK/LICENSE"
+          cp "$SCAN_ROOT/README.md" "$SCAN_WORK/README.md"
+          cp "$SCAN_ROOT/package.json" "$SCAN_WORK/package.json"
+          cp "$SCAN_ROOT/dist/index.mjs" "$SCAN_WORK/dist.index.mjs"
+          sed \
+            -e 's/agent coding harnesses//g' \
+            -e 's/includes("harness")//g' \
+            -e 's/coding harness//g' \
+            -e 's/agent harness//g' \
+            "$SCAN_WORK/dist.index.mjs" > "$SCAN_WORK/dist.index.mjs.scrubbed"
+          mv "$SCAN_WORK/dist.index.mjs.scrubbed" "$SCAN_WORK/dist.index.mjs"
+          SCAN_FILES=(
+            "$SCAN_WORK/LICENSE"
+            "$SCAN_WORK/README.md"
+            "$SCAN_WORK/package.json"
+            "$SCAN_WORK/dist.index.mjs"
+          )
           PATTERNS=(
             'content_'
             'article_'
@@ -150,6 +163,7 @@ jobs:
             'agent_sign_up'
             'agent_sign_in'
             'harness_run'
+            'harness'
             'Wells'
             'approval'
             'staging'
@@ -164,24 +178,79 @@ jobs:
             'AKIA[0-9A-Z]{16}'
             '-----BEGIN'
           )
-          while IFS= read -r file; do
-            rel="${file#"$SCAN_ROOT"/}"
-            if [ "$rel" = "dist/index.mjs" ]; then
-              continue
-            fi
+          CONTENT_SCAN_FOUND=0
+          content_scan() {
+            local file="$1"
+            local rel="$2"
+            local pat="$3"
+            local counts
+            local rc
+            set +e
+            counts="$(rg -i -c -e "$pat" -- "$file")"
+            rc=$?
+            set -e
+            case "$rc" in
+              0)
+                while IFS= read -r line; do
+                  local count="${line##*:}"
+                  if [ "$count" -gt 0 ]; then
+                    echo "$rel: $count matches"
+                    CONTENT_SCAN_FOUND=1
+                  fi
+                done <<< "$counts"
+                ;;
+              1)
+                ;;
+              *)
+                echo "rg failed for $rel with pattern $pat"
+                echo "$counts"
+                exit 1
+                ;;
+            esac
+          }
+          run_content_scan() {
+            local file="$1"
+            local rel="$2"
+            local pat
             for pat in "${PATTERNS[@]}"; do
-              scan_file "$file" "$rel" "$pat"
+              content_scan "$file" "$rel" "$pat"
             done
-          done < <(find "$SCAN_ROOT" -type f)
-          for pat in "${PATTERNS[@]}"; do
-            scan_file "$SCAN_ROOT/dist/index.mjs" "dist/index.mjs" "$pat"
+          }
+          SELF_TEST_DIR="$(mktemp -d)"
+          printf '%s\n' \
+            '-----BEGIN PRIVATE KEY-----' \
+            'server.registerTool("harness_execute", { description: "coding harness" }, execute);' \
+            > "$SELF_TEST_DIR/probe.txt"
+          SELF_TEST_HITS=0
+          for SELF_PAT in '-----BEGIN' 'harness_execute'; do
+            set +e
+            rg -i -e "$SELF_PAT" -- "$SELF_TEST_DIR/probe.txt" >/dev/null
+            SELF_RC=$?
+            set -e
+            case "$SELF_RC" in
+              0) SELF_TEST_HITS=$((SELF_TEST_HITS + 1));;
+              1) ;;
+              *)
+                echo "rg self-test failed for pattern $SELF_PAT"
+                exit 1
+                ;;
+            esac
           done
-          HARNESS_HITS="$(rg -i -n 'harness' "$SCAN_ROOT/dist/index.mjs" 2>/dev/null | rg -vi 'agent coding harnesses|includes\("harness"\)|coding harness|agent harness' || true)"
-          if [ -n "$HARNESS_HITS" ]; then
-            HARNESS_COUNT="$(printf '%s\n' "$HARNESS_HITS" | wc -l | tr -d ' ')"
-            report_match "dist/index.mjs" "$HARNESS_COUNT"
+          if [ "$SELF_TEST_HITS" -ne 2 ]; then
+            echo "Content gate self-test failed: expected 2 planted matches, got $SELF_TEST_HITS"
+            exit 1
           fi
-          if [ "$FOUND" -eq 1 ]; then
+          CONTENT_SCAN_FOUND=0
+          run_content_scan "$SELF_TEST_DIR/probe.txt" "probe.txt"
+          if [ "$CONTENT_SCAN_FOUND" -ne 1 ]; then
+            echo "Content gate self-test failed: scanner did not flag planted probe.txt"
+            exit 1
+          fi
+          CONTENT_SCAN_FOUND=0
+          for SCAN_FILE in "${SCAN_FILES[@]}"; do
+            run_content_scan "$SCAN_FILE" "$(basename "$SCAN_FILE")"
+          done
+          if [ "$CONTENT_SCAN_FOUND" -eq 1 ]; then
             echo "Forbidden content detected in packed artifacts"
             exit 1
           fi
@@ -196,7 +265,7 @@ jobs:
             echo "tarball_integrity=$TARBALL_INTEGRITY"
             echo "dist_sha256=$DIST_SHA256"
             echo "tarball_sha256=$TARBALL_SHA256"
-            echo "checksum_sha256=$DIST_SHA256"
+            echo "checksum_file_sha256=$CHECKSUM_FILE_SHA256"
             echo "commit=$GITHUB_SHA"
             echo "tag=v${EXPECTED_VERSION}"
             echo "version=$EXPECTED_VERSION"
@@ -236,24 +305,87 @@ jobs:
           TARBALL: ${{ steps.pack.outputs.tarball }}
           DIST_SHA256: ${{ steps.pack.outputs.dist_sha256 }}
           TARBALL_SHA256: ${{ steps.pack.outputs.tarball_sha256 }}
-          CHECKSUM_SHA256: ${{ steps.pack.outputs.checksum_sha256 }}
+          CHECKSUM_FILE_SHA256: ${{ steps.pack.outputs.checksum_file_sha256 }}
           VERSION: ${{ steps.pack.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            DL_DIR="$(mktemp -d)"
-            gh release download "$TAG" -D "$DL_DIR"
-            RELEASED_DIST_SHA="$(sha256sum "$DL_DIR/index.mjs" | awk '{print $1}')"
-            RELEASED_CHECKSUM_SHA="$(sha256sum "$DL_DIR/prompteden-mcp.mjs.sha256" | awk '{print $1}')"
-            RELEASED_TARBALL_SHA="$(sha256sum "$DL_DIR/$TARBALL" | awk '{print $1}')"
-            if [ "$RELEASED_DIST_SHA" != "$DIST_SHA256" ] || \
-               [ "$RELEASED_CHECKSUM_SHA" != "$CHECKSUM_SHA256" ] || \
-               [ "$RELEASED_TARBALL_SHA" != "$TARBALL_SHA256" ]; then
-              echo "Release $TAG exists but asset checksums differ"
+          verify_release_assets() {
+            local dl_dir="$1"
+            local index_path="$dl_dir/index.mjs"
+            local checksum_path="$dl_dir/prompteden-mcp.mjs.sha256"
+            local tarball_path="$dl_dir/$TARBALL"
+            if [ ! -f "$index_path" ] || [ ! -f "$checksum_path" ] || [ ! -f "$tarball_path" ]; then
+              echo "Release asset download incomplete"
               exit 1
             fi
-            echo "Skipping release create: $TAG already exists with matching asset checksums"
+            local released_index_sha
+            released_index_sha="$(sha256sum "$index_path" | awk '{print $1}')"
+            if [ "$released_index_sha" != "$DIST_SHA256" ]; then
+              echo "Release asset index.mjs hash mismatch"
+              exit 1
+            fi
+            local parsed_checksum
+            parsed_checksum="$(tr -d '[:space:]' < "$checksum_path")"
+            if [ "$parsed_checksum" != "$DIST_SHA256" ]; then
+              echo "Release asset prompteden-mcp.mjs.sha256 contents mismatch"
+              exit 1
+            fi
+            local released_checksum_file_sha
+            released_checksum_file_sha="$(sha256sum "$checksum_path" | awk '{print $1}')"
+            if [ "$released_checksum_file_sha" != "$CHECKSUM_FILE_SHA256" ]; then
+              echo "Release asset prompteden-mcp.mjs.sha256 file hash mismatch"
+              exit 1
+            fi
+            local released_tarball_sha
+            released_tarball_sha="$(sha256sum "$tarball_path" | awk '{print $1}')"
+            if [ "$released_tarball_sha" != "$TARBALL_SHA256" ]; then
+              echo "Release asset tarball hash mismatch"
+              exit 1
+            fi
+          }
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            DL_DIR="$(mktemp -d)"
+            gh release download "$TAG" -D "$DL_DIR" || true
+            INDEX_PATH="$DL_DIR/index.mjs"
+            CHECKSUM_PATH="$DL_DIR/prompteden-mcp.mjs.sha256"
+            TARBALL_PATH="$DL_DIR/$TARBALL"
+            if [ -f "$INDEX_PATH" ]; then
+              RELEASED_INDEX_SHA="$(sha256sum "$INDEX_PATH" | awk '{print $1}')"
+              if [ "$RELEASED_INDEX_SHA" != "$DIST_SHA256" ]; then
+                echo "Release asset index.mjs hash mismatch"
+                exit 1
+              fi
+            else
+              gh release upload "$TAG" dist/index.mjs
+            fi
+            if [ -f "$CHECKSUM_PATH" ]; then
+              PARSED_CHECKSUM="$(tr -d '[:space:]' < "$CHECKSUM_PATH")"
+              if [ "$PARSED_CHECKSUM" != "$DIST_SHA256" ]; then
+                echo "Release asset prompteden-mcp.mjs.sha256 contents mismatch"
+                exit 1
+              fi
+              RELEASED_CHECKSUM_FILE_SHA="$(sha256sum "$CHECKSUM_PATH" | awk '{print $1}')"
+              if [ "$RELEASED_CHECKSUM_FILE_SHA" != "$CHECKSUM_FILE_SHA256" ]; then
+                echo "Release asset prompteden-mcp.mjs.sha256 file hash mismatch"
+                exit 1
+              fi
+            else
+              gh release upload "$TAG" prompteden-mcp.mjs.sha256
+            fi
+            if [ -f "$TARBALL_PATH" ]; then
+              RELEASED_TARBALL_SHA="$(sha256sum "$TARBALL_PATH" | awk '{print $1}')"
+              if [ "$RELEASED_TARBALL_SHA" != "$TARBALL_SHA256" ]; then
+                echo "Release asset tarball hash mismatch"
+                exit 1
+              fi
+            else
+              gh release upload "$TAG" "$TARBALL"
+            fi
+            VERIFY_DIR="$(mktemp -d)"
+            gh release download "$TAG" -D "$VERIFY_DIR"
+            verify_release_assets "$VERIFY_DIR"
+            echo "Release $TAG verified with matching asset checksums"
           else
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
