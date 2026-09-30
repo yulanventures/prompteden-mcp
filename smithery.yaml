@@ -1,0 +1,44 @@
+# Stdio start command for Smithery.
+#
+# Checked against Smithery docs on 2026-09-29:
+# - https://smithery.ai/docs/build/publish documents URL publishing and MCPB
+#   bundles. It does not document smithery.yaml.
+# - https://smithery.ai/docs/build/session-config documents a Zod or JSON
+#   Schema config. For local servers it maps fields to CLI flags.
+# - https://smithery.ai/docs/build/project-config (the older smithery.yaml
+#   page) returns 404.
+#
+# This file keeps the stdio startCommand shape still shipped by published
+# servers: a JSON Schema for the API key, and a commandFunction that launches
+# the npm package. The server reads PROMPTEDEN_API_KEY from the environment
+# and does not accept the key as a CLI flag.
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - promptedenApiKey
+    properties:
+      promptedenApiKey:
+        type: string
+        title: PromptEden API key
+        description: PromptEden API key. Passed to the process as PROMPTEDEN_API_KEY. The server does not write it to disk.
+      promptedenBaseUrl:
+        type: string
+        title: PromptEden base URL
+        description: Optional. Must be https://app.prompteden.com. Any other origin is rejected by the server.
+        enum:
+          - https://app.prompteden.com
+        default: https://app.prompteden.com
+  commandFunction: |
+    (config) => ({
+      command: 'npx',
+      args: ['-y', '@prompteden/mcp-server'],
+      env: {
+        PROMPTEDEN_API_KEY: config.promptedenApiKey,
+        PROMPTEDEN_BASE_URL: config.promptedenBaseUrl || 'https://app.prompteden.com'
+      }
+    })
+  exampleConfig:
+    promptedenApiKey: YOUR_PROMPTEDEN_API_KEY
+    promptedenBaseUrl: https://app.prompteden.com

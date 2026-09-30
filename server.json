@@ -1,0 +1,41 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.yulanventures/prompteden-mcp",
+  "title": "PromptEden",
+  "description": "Stdio MCP server for PromptEden projects, monitors, answers, and analytics.",
+  "websiteUrl": "https://app.prompteden.com",
+  "repository": {
+    "url": "https://github.com/yulanventures/prompteden-mcp",
+    "source": "github"
+  },
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@prompteden/mcp-server",
+      "version": "0.3.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PROMPTEDEN_API_KEY",
+          "description": "PromptEden API key from Settings > API Keys. Required for every tool.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "PROMPTEDEN_BASE_URL",
+          "description": "Optional. When set, must be https://app.prompteden.com. Any other origin is rejected.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "default": "https://app.prompteden.com"
+        }
+      ]
+    }
+  ]
+}
