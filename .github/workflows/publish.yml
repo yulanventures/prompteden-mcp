@@ -1,0 +1,65 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to publish
+        required: false
+        default: 2ce401f4cf9938576ca4f8311b9eda75a2ff207b
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for OIDC authentication
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build
+
+      - name: Pack and reject forbidden strings
+        id: pack
+        run: |
+          set -euo pipefail
+          npm pack
+          tarball="$(find . -maxdepth 1 -name '*.tgz' -printf '%f\n')"
+          test "$(printf '%s\n' "$tarball" | wc -l)" -eq 1
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          tmp="$(mktemp -d)"
+          tar -xzf "$tarball" -C "$tmp"
+          if grep -R -n -E -- 'content_|article_|newsroom|displacement|Wells|approval|staging' "$tmp"; then
+            echo "Forbidden string found in the packed tarball"
+            exit 1
+          fi
+
+      - name: Publish package to npm
+        run: npm publish "${{ steps.pack.outputs.tarball }}" --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish
