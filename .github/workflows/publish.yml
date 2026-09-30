@@ -13,8 +13,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write # Required for OIDC authentication
-      contents: read
+      contents: write
+      id-token: write
 
     steps:
       - name: Checkout code
@@ -41,18 +41,41 @@ jobs:
           npm pack
           tarball="$(find . -maxdepth 1 -name '*.tgz' -printf '%f\n')"
           test "$(printf '%s\n' "$tarball" | wc -l)" -eq 1
+          sha256="$(sha256sum dist/index.mjs | awk '{print $1}')"
+          printf '%s\n' "$sha256" > prompteden-mcp.mjs.sha256
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           tmp="$(mktemp -d)"
           tar -xzf "$tarball" -C "$tmp"
           if grep -R -n -E -- 'content_|article_|newsroom|displacement|Wells|approval|staging' "$tmp"; then
             echo "Forbidden string found in the packed tarball"
             exit 1
           fi
+          {
+            echo "## dist/index.mjs sha256"
+            echo '```'
+            echo "$sha256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish package to npm
         run: npm publish "${{ steps.pack.outputs.tarball }}" --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release
+        run: |
+          set -euo pipefail
+          gh release create v0.3.0 \
+            --target "${{ steps.pack.outputs.commit }}" \
+            --title "v0.3.0" \
+            --notes "Release v0.3.0 of @prompteden/mcp-server (built from ${{ steps.pack.outputs.commit }})." \
+            dist/index.mjs \
+            prompteden-mcp.mjs.sha256 \
+            "${{ steps.pack.outputs.tarball }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Install mcp-publisher
         run: |
