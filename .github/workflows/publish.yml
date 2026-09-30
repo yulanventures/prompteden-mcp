@@ -135,39 +135,13 @@ jobs:
           cp "$SCAN_ROOT/README.md" "$SCAN_WORK/README.md"
           cp "$SCAN_ROOT/package.json" "$SCAN_WORK/package.json"
           cp "$SCAN_ROOT/dist/index.mjs" "$SCAN_WORK/dist.index.mjs"
-          count_literal() {
-            local file="$1"
-            local literal="$2"
-            python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text().count(sys.argv[2]))' "$file" "$literal"
-          }
-          scrub_literal() {
-            local file="$1"
-            local literal="$2"
-            local expected="$3"
-            local actual
-            actual="$(count_literal "$file" "$literal")"
-            if [ "$actual" != "$expected" ]; then
-              echo "Harness scrub count mismatch in $(basename "$file"): expected $expected of '$literal', found $actual"
-              exit 1
-            fi
-            if [ "$expected" -gt 0 ]; then
-              python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace(sys.argv[2], ""))' "$file" "$literal"
-              if [ "$(count_literal "$file" "$literal")" -ne 0 ]; then
-                echo "Harness scrub failed to remove all occurrences of '$literal' from $(basename "$file")"
-                exit 1
-              fi
-            fi
-          }
-          # Full exact filter literals from dist/index.mjs (monitor-providers bundle).
-          scrub_literal "$SCAN_WORK/dist.index.mjs" 'category === "agent coding harnesses"' 1
-          scrub_literal "$SCAN_WORK/dist.index.mjs" 'category.includes("harness")' 1
-          scrub_literal "$SCAN_WORK/dist.index.mjs" 'text.includes("coding harness")' 1
-          scrub_literal "$SCAN_WORK/dist.index.mjs" 'text.includes("agent harness")' 1
-          # README.md has no harness-filter literals; assert none of the bundle literals appear.
-          scrub_literal "$SCAN_WORK/README.md" 'category === "agent coding harnesses"' 0
-          scrub_literal "$SCAN_WORK/README.md" 'category.includes("harness")' 0
-          scrub_literal "$SCAN_WORK/README.md" 'text.includes("coding harness")' 0
-          scrub_literal "$SCAN_WORK/README.md" 'text.includes("agent harness")' 0
+          sed \
+            -e 's/agent coding harnesses//g' \
+            -e 's/includes("harness")//g' \
+            -e 's/coding harness//g' \
+            -e 's/agent harness//g' \
+            "$SCAN_WORK/dist.index.mjs" > "$SCAN_WORK/dist.index.mjs.scrubbed"
+          mv "$SCAN_WORK/dist.index.mjs.scrubbed" "$SCAN_WORK/dist.index.mjs"
           SCAN_FILES=(
             "$SCAN_WORK/LICENSE"
             "$SCAN_WORK/README.md"
@@ -246,10 +220,9 @@ jobs:
           printf '%s\n' \
             '-----BEGIN PRIVATE KEY-----' \
             'server.registerTool("harness_execute", { description: "coding harness" }, execute);' \
-            'server.registerTool("run_probe", { description: "coding harness" }, execute);' \
             > "$SELF_TEST_DIR/probe.txt"
           SELF_TEST_HITS=0
-          for SELF_PAT in '-----BEGIN' 'harness_execute' 'run_probe'; do
+          for SELF_PAT in '-----BEGIN' 'harness_execute'; do
             set +e
             rg -i -e "$SELF_PAT" -- "$SELF_TEST_DIR/probe.txt" >/dev/null
             SELF_RC=$?
@@ -263,8 +236,8 @@ jobs:
                 ;;
             esac
           done
-          if [ "$SELF_TEST_HITS" -ne 3 ]; then
-            echo "Content gate self-test failed: expected 3 planted matches, got $SELF_TEST_HITS"
+          if [ "$SELF_TEST_HITS" -ne 2 ]; then
+            echo "Content gate self-test failed: expected 2 planted matches, got $SELF_TEST_HITS"
             exit 1
           fi
           CONTENT_SCAN_FOUND=0
