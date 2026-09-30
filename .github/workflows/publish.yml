@@ -2,12 +2,13 @@ name: Publish
 
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Git ref to publish
-        required: false
-        default: 2ce401f4cf9938576ca4f8311b9eda75a2ff207b
-        type: string
+
+env:
+  EXPECTED_VERSION: "0.3.0"
+  REVIEWED_BASE: "2ce401f4cf9938576ca4f8311b9eda75a2ff207b"
+  # mcp-publisher_linux_amd64.tar.gz from modelcontextprotocol/registry v1.8.1
+  # registry_1.8.1_checksums.txt (official GitHub release asset).
+  MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
 
 jobs:
   publish:
@@ -17,10 +18,54 @@ jobs:
       id-token: write
 
     steps:
+      - name: Require main branch
+        env:
+          REF_NAME: ${{ github.ref }}
+        run: |
+          if [ "$REF_NAME" != "refs/heads/main" ]; then
+            echo "Publish is only allowed from refs/heads/main (got $REF_NAME)"
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Assert reviewed package tree
+        env:
+          REVIEWED_BASE: ${{ env.REVIEWED_BASE }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet "$REVIEWED_BASE" "$GITHUB_SHA" -- . ':(exclude).github'; then
+            echo "Package tree differs from reviewed commit $REVIEWED_BASE outside .github"
+            git diff --stat "$REVIEWED_BASE" "$GITHUB_SHA" -- . ':(exclude).github'
+            exit 1
+          fi
+
+      - name: Verify versions and remote tag
+        env:
+          EXPECTED_VERSION: ${{ env.EXPECTED_VERSION }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          SERVER_VERSION="$(node -p "require('./server.json').version")"
+          PACKAGE_ENTRY_VERSION="$(node -p "require('./server.json').packages[0].version")"
+          if [ "$PKG_VERSION" != "$EXPECTED_VERSION" ] || \
+             [ "$SERVER_VERSION" != "$EXPECTED_VERSION" ] || \
+             [ "$PACKAGE_ENTRY_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "Version mismatch: package.json=$PKG_VERSION server.json=$SERVER_VERSION packages[0]=$PACKAGE_ENTRY_VERSION expected=$EXPECTED_VERSION"
+            exit 1
+          fi
+          TAG="v${EXPECTED_VERSION}"
+          REMOTE_TAG="$(git ls-remote origin "refs/tags/${TAG}^{}" | awk '{print $1}')"
+          if [ -n "$REMOTE_TAG" ] && [ "$REMOTE_TAG" != "$GITHUB_SHA" ]; then
+            echo "Remote tag $TAG points to $REMOTE_TAG, expected $GITHUB_SHA"
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -34,52 +79,200 @@ jobs:
       - name: Build package
         run: npm run build
 
-      - name: Pack and reject forbidden strings
+      - name: Pack, allowlist, and content gate
         id: pack
+        env:
+          EXPECTED_VERSION: ${{ env.EXPECTED_VERSION }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          npm pack
-          tarball="$(find . -maxdepth 1 -name '*.tgz' -printf '%f\n')"
-          test "$(printf '%s\n' "$tarball" | wc -l)" -eq 1
-          sha256="$(sha256sum dist/index.mjs | awk '{print $1}')"
-          printf '%s\n' "$sha256" > prompteden-mcp.mjs.sha256
-          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
-          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          tmp="$(mktemp -d)"
-          tar -xzf "$tarball" -C "$tmp"
-          if grep -R -n -E -- 'content_|article_|newsroom|displacement|Wells|approval|staging' "$tmp"; then
-            echo "Forbidden string found in the packed tarball"
+          ALLOWED_FILES="LICENSE
+          README.md
+          dist/index.mjs
+          package.json"
+          PACKED_FILES="$(npm pack --dry-run --json --ignore-scripts | node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync(0, "utf8"));
+            const entry = Array.isArray(data) ? data[0] : data;
+            for (const file of entry.files) {
+              console.log(file.path.replace(/^package\//, ""));
+            }
+          ' | sort)"
+          EXPECTED_SORTED="$(printf '%s\n' "$ALLOWED_FILES" | sort)"
+          if [ "$PACKED_FILES" != "$EXPECTED_SORTED" ]; then
+            echo "Tarball file list does not match allowlist"
+            echo "expected:"
+            printf '%s\n' "$EXPECTED_SORTED"
+            echo "actual:"
+            printf '%s\n' "$PACKED_FILES"
+            exit 1
+          fi
+          npm pack --ignore-scripts
+          TARBALL="$(find . -maxdepth 1 -name '*.tgz' -printf '%f\n' | head -n 1)"
+          test -n "$TARBALL"
+          DIST_SHA256="$(sha256sum dist/index.mjs | awk '{print $1}')"
+          printf '%s\n' "$DIST_SHA256" > prompteden-mcp.mjs.sha256
+          TARBALL_INTEGRITY="sha512-$(openssl dgst -sha512 -binary "$TARBALL" | base64 -w 0)"
+          TARBALL_SHA256="$(sha256sum "$TARBALL" | awk '{print $1}')"
+          UNPACK_DIR="$(mktemp -d)"
+          tar -xzf "$TARBALL" -C "$UNPACK_DIR"
+          SCAN_ROOT="$UNPACK_DIR/package"
+          FOUND=0
+          report_match() {
+            echo "$1: $2 matches"
+            FOUND=1
+          }
+          scan_file() {
+            local file="$1"
+            local rel="$2"
+            local pat="$3"
+            if [ ! -f "$file" ]; then
+              return 0
+            fi
+            local count
+            count="$(rg -i -c "$pat" "$file" 2>/dev/null || true)"
+            if [ -n "$count" ] && [ "$count" -gt 0 ]; then
+              report_match "$rel" "$count"
+            fi
+          }
+          PATTERNS=(
+            'content_'
+            'article_'
+            'newsroom'
+            'create_content'
+            'generate_content'
+            'update_content'
+            'publish_content'
+            'list_content'
+            'preview_displacement'
+            'displacement'
+            'check_approval'
+            'agent_sign_up'
+            'agent_sign_in'
+            'harness_run'
+            'Wells'
+            'approval'
+            'staging'
+            '/Users/'
+            '/private/tmp'
+            '/home/'
+            'op://'
+            'npm_[A-Za-z0-9]{20,}'
+            'gh[pousr]_[A-Za-z0-9]{20,}'
+            'sk-[A-Za-z0-9]{20,}'
+            'pe_[A-Za-z0-9]{20,}'
+            'AKIA[0-9A-Z]{16}'
+            '-----BEGIN'
+          )
+          while IFS= read -r file; do
+            rel="${file#"$SCAN_ROOT"/}"
+            if [ "$rel" = "dist/index.mjs" ]; then
+              continue
+            fi
+            for pat in "${PATTERNS[@]}"; do
+              scan_file "$file" "$rel" "$pat"
+            done
+          done < <(find "$SCAN_ROOT" -type f)
+          for pat in "${PATTERNS[@]}"; do
+            scan_file "$SCAN_ROOT/dist/index.mjs" "dist/index.mjs" "$pat"
+          done
+          HARNESS_HITS="$(rg -i -n 'harness' "$SCAN_ROOT/dist/index.mjs" 2>/dev/null | rg -vi 'agent coding harnesses|includes\("harness"\)|coding harness|agent harness' || true)"
+          if [ -n "$HARNESS_HITS" ]; then
+            HARNESS_COUNT="$(printf '%s\n' "$HARNESS_HITS" | wc -l | tr -d ' ')"
+            report_match "dist/index.mjs" "$HARNESS_COUNT"
+          fi
+          if [ "$FOUND" -eq 1 ]; then
+            echo "Forbidden content detected in packed artifacts"
             exit 1
           fi
           {
             echo "## dist/index.mjs sha256"
             echo '```'
-            echo "$sha256"
+            echo "$DIST_SHA256"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "tarball=$TARBALL"
+            echo "tarball_integrity=$TARBALL_INTEGRITY"
+            echo "dist_sha256=$DIST_SHA256"
+            echo "tarball_sha256=$TARBALL_SHA256"
+            echo "checksum_sha256=$DIST_SHA256"
+            echo "commit=$GITHUB_SHA"
+            echo "tag=v${EXPECTED_VERSION}"
+            echo "version=$EXPECTED_VERSION"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish package to npm
-        run: npm publish "${{ steps.pack.outputs.tarball }}" --provenance --access public
         env:
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          TARBALL_INTEGRITY: ${{ steps.pack.outputs.tarball_integrity }}
+          VERSION: ${{ steps.pack.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Create GitHub release
         run: |
           set -euo pipefail
-          gh release create v0.3.0 \
-            --target "${{ steps.pack.outputs.commit }}" \
-            --title "v0.3.0" \
-            --notes "Release v0.3.0 of @prompteden/mcp-server (built from ${{ steps.pack.outputs.commit }})." \
-            dist/index.mjs \
-            prompteden-mcp.mjs.sha256 \
-            "${{ steps.pack.outputs.tarball }}"
+          NPM_VIEW_ERR="$(mktemp)"
+          if PUBLISHED_INTEGRITY="$(npm view "@prompteden/mcp-server@${VERSION}" dist.integrity 2>"$NPM_VIEW_ERR")"; then
+            if [ "$PUBLISHED_INTEGRITY" = "$TARBALL_INTEGRITY" ]; then
+              echo "Skipping npm publish: version ${VERSION} already published with matching integrity"
+            else
+              echo "npm version ${VERSION} exists but integrity mismatch"
+              echo "published: $PUBLISHED_INTEGRITY"
+              echo "built:     $TARBALL_INTEGRITY"
+              exit 1
+            fi
+          else
+            if grep -qiE '404|not found|E404|No match found' "$NPM_VIEW_ERR"; then
+              npm publish "$TARBALL" --provenance --access public
+            else
+              cat "$NPM_VIEW_ERR"
+              exit 1
+            fi
+          fi
+
+      - name: Create GitHub release
         env:
+          TAG: ${{ steps.pack.outputs.tag }}
+          GITHUB_SHA: ${{ steps.pack.outputs.commit }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+          DIST_SHA256: ${{ steps.pack.outputs.dist_sha256 }}
+          TARBALL_SHA256: ${{ steps.pack.outputs.tarball_sha256 }}
+          CHECKSUM_SHA256: ${{ steps.pack.outputs.checksum_sha256 }}
+          VERSION: ${{ steps.pack.outputs.version }}
           GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            DL_DIR="$(mktemp -d)"
+            gh release download "$TAG" -D "$DL_DIR"
+            RELEASED_DIST_SHA="$(sha256sum "$DL_DIR/index.mjs" | awk '{print $1}')"
+            RELEASED_CHECKSUM_SHA="$(sha256sum "$DL_DIR/prompteden-mcp.mjs.sha256" | awk '{print $1}')"
+            RELEASED_TARBALL_SHA="$(sha256sum "$DL_DIR/$TARBALL" | awk '{print $1}')"
+            if [ "$RELEASED_DIST_SHA" != "$DIST_SHA256" ] || \
+               [ "$RELEASED_CHECKSUM_SHA" != "$CHECKSUM_SHA256" ] || \
+               [ "$RELEASED_TARBALL_SHA" != "$TARBALL_SHA256" ]; then
+              echo "Release $TAG exists but asset checksums differ"
+              exit 1
+            fi
+            echo "Skipping release create: $TAG already exists with matching asset checksums"
+          else
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --notes "Release ${TAG} of @prompteden/mcp-server (built from ${GITHUB_SHA})." \
+              dist/index.mjs \
+              prompteden-mcp.mjs.sha256 \
+              "$TARBALL"
+          fi
 
       - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_SHA256: ${{ env.MCP_PUBLISHER_SHA256 }}
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          set -euo pipefail
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz"
+          printf '%s  mcp-publisher.tar.gz\n' "$MCP_PUBLISHER_SHA256" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
 
       - name: Authenticate to MCP Registry
         run: ./mcp-publisher login github-oidc
