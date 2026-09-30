@@ -9,6 +9,9 @@ env:
   # mcp-publisher_linux_amd64.tar.gz from modelcontextprotocol/registry v1.8.1
   # registry_1.8.1_checksums.txt (official GitHub release asset).
   MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+  # ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz from BurntSushi/ripgrep v15.2.0
+  # (official GitHub release .sha256 asset).
+  RIPGREP_SHA256: "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c"
 
 jobs:
   publish:
@@ -86,6 +89,18 @@ jobs:
 
       - name: Build package
         run: npm run build
+
+      - name: Install ripgrep
+        env:
+          RIPGREP_SHA256: ${{ env.RIPGREP_SHA256 }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o ripgrep.tar.gz \
+            "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz"
+          printf '%s  ripgrep.tar.gz\n' "$RIPGREP_SHA256" | sha256sum -c -
+          tar xzf ripgrep.tar.gz
+          sudo install -m 755 ripgrep-15.2.0-x86_64-unknown-linux-musl/rg /usr/local/bin/rg
+          rg --version
 
       - name: Pack, allowlist, and content gate
         id: pack
@@ -243,36 +258,34 @@ jobs:
             done
           }
           SELF_TEST_DIR="$(mktemp -d)"
-          printf '%s\n' \
-            '-----BEGIN PRIVATE KEY-----' \
-            'server.registerTool("harness_execute", { description: "coding harness" }, execute);' \
-            'server.registerTool("run_probe", { description: "coding harness" }, execute);' \
-            > "$SELF_TEST_DIR/probe.txt"
-          SELF_TEST_HITS=0
-          for SELF_PAT in '-----BEGIN' 'harness_execute' 'run_probe'; do
-            set +e
-            rg -i -e "$SELF_PAT" -- "$SELF_TEST_DIR/probe.txt" >/dev/null
-            SELF_RC=$?
-            set -e
-            case "$SELF_RC" in
-              0) SELF_TEST_HITS=$((SELF_TEST_HITS + 1));;
-              1) ;;
-              *)
-                echo "rg self-test failed for pattern $SELF_PAT"
-                exit 1
-                ;;
-            esac
-          done
-          if [ "$SELF_TEST_HITS" -ne 3 ]; then
-            echo "Content gate self-test failed: expected 3 planted matches, got $SELF_TEST_HITS"
-            exit 1
-          fi
-          CONTENT_SCAN_FOUND=0
-          run_content_scan "$SELF_TEST_DIR/probe.txt" "probe.txt"
-          if [ "$CONTENT_SCAN_FOUND" -ne 1 ]; then
-            echo "Content gate self-test failed: scanner did not flag planted probe.txt"
-            exit 1
-          fi
+          printf '%s\n' '-----BEGIN PRIVATE KEY-----' > "$SELF_TEST_DIR/pem.txt"
+          printf '%s\n' 'server.registerTool("harness_execute", { description: "coding harness" }, execute);' > "$SELF_TEST_DIR/harness_execute.txt"
+          printf '%s\n' 'server.registerTool("run_probe", { description: "coding harness" }, execute);' > "$SELF_TEST_DIR/run_probe.txt"
+          printf '%s\n' 'benign package metadata only' > "$SELF_TEST_DIR/clean.txt"
+          self_test_expect_flagged() {
+            local file="$1"
+            local rel="$2"
+            CONTENT_SCAN_FOUND=0
+            run_content_scan "$file" "$rel"
+            if [ "$CONTENT_SCAN_FOUND" -ne 1 ]; then
+              echo "Content gate self-test failed: scanner did not flag $rel"
+              exit 1
+            fi
+          }
+          self_test_expect_clean() {
+            local file="$1"
+            local rel="$2"
+            CONTENT_SCAN_FOUND=0
+            run_content_scan "$file" "$rel"
+            if [ "$CONTENT_SCAN_FOUND" -ne 0 ]; then
+              echo "Content gate self-test failed: scanner falsely flagged $rel"
+              exit 1
+            fi
+          }
+          self_test_expect_flagged "$SELF_TEST_DIR/pem.txt" "pem.txt"
+          self_test_expect_flagged "$SELF_TEST_DIR/harness_execute.txt" "harness_execute.txt"
+          self_test_expect_flagged "$SELF_TEST_DIR/run_probe.txt" "run_probe.txt"
+          self_test_expect_clean "$SELF_TEST_DIR/clean.txt" "clean.txt"
           CONTENT_SCAN_FOUND=0
           for SCAN_FILE in "${SCAN_FILES[@]}"; do
             run_content_scan "$SCAN_FILE" "$(basename "$SCAN_FILE")"
