@@ -157,7 +157,7 @@ export type PromptEdenClient = {
 
 const ALLOWED_BASE_ORIGIN = "https://app.prompteden.com";
 
-function normalizeBaseUrl(value: string): string {
+export function normalizeBaseUrl(value: string): string {
   let url: URL;
   try {
     url = new URL(value);

@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
 
 env:
-  EXPECTED_VERSION: "0.3.0"
-  REVIEWED_BASE: "2ce401f4cf9938576ca4f8311b9eda75a2ff207b"
+  EXPECTED_VERSION: "0.4.0"
+  REVIEWED_BASE: "fd5378ea230eb534ead06b655f41f6678e701366"
   # mcp-publisher_linux_amd64.tar.gz from modelcontextprotocol/registry v1.8.1
   # registry_1.8.1_checksums.txt (official GitHub release asset).
   MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
@@ -113,7 +113,8 @@ jobs:
             echo "ripgrep (rg) is required for the content gate"
             exit 1
           fi
-          ALLOWED_FILES="LICENSE
+          ALLOWED_FILES="CHANGELOG.md
+          LICENSE
           README.md
           dist/index.mjs
           package.json"
@@ -146,6 +147,7 @@ jobs:
           tar -xzf "$TARBALL" -C "$UNPACK_DIR"
           SCAN_ROOT="$UNPACK_DIR/package"
           SCAN_WORK="$(mktemp -d)"
+          cp "$SCAN_ROOT/CHANGELOG.md" "$SCAN_WORK/CHANGELOG.md"
           cp "$SCAN_ROOT/LICENSE" "$SCAN_WORK/LICENSE"
           cp "$SCAN_ROOT/README.md" "$SCAN_WORK/README.md"
           cp "$SCAN_ROOT/package.json" "$SCAN_WORK/package.json"
@@ -162,13 +164,13 @@ jobs:
             local actual
             actual="$(count_literal "$file" "$literal")"
             if [ "$actual" != "$expected" ]; then
-              echo "Harness scrub count mismatch in $(basename "$file"): expected $expected of '$literal', found $actual"
+              echo "Scrub count mismatch in $(basename "$file"): expected $expected of '$literal', found $actual"
               exit 1
             fi
             if [ "$expected" -gt 0 ]; then
               python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace(sys.argv[2], ""))' "$file" "$literal"
               if [ "$(count_literal "$file" "$literal")" -ne 0 ]; then
-                echo "Harness scrub failed to remove all occurrences of '$literal' from $(basename "$file")"
+                echo "Scrub failed to remove all occurrences of '$literal' from $(basename "$file")"
                 exit 1
               fi
             fi
@@ -183,12 +185,42 @@ jobs:
           scrub_literal "$SCAN_WORK/README.md" 'category.includes("harness")' 0
           scrub_literal "$SCAN_WORK/README.md" 'text.includes("coding harness")' 0
           scrub_literal "$SCAN_WORK/README.md" 'text.includes("agent harness")' 0
+          # Exact shipped content-agent and approval literals; scrub enclosing text first.
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'Content calls use hosted MCP; writes return a human approval proposal.' 1
+          scrub_literal "$SCAN_WORK/dist.index.mjs" '`Propose ${name.replaceAll("_", " ")} for human approval. Configuration uses the app validation and plan limits. Output decisions are restricted to the publication session owner and require a pieceId/pieceHash from review_content_agent_output and an open veto window.`' 1
+          scrub_literal "$SCAN_WORK/dist.index.mjs" '"This hosted MCP tool is not enabled on the approval-gated write surface."' 1
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'list_content_agents' 7
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'get_content_agent' 6
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'review_content_agent_output' 5
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'configure_content_agent' 5
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'activate_content_agent' 5
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'pause_content_agent' 5
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'resume_content_agent' 5
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'approve_content_agent_output' 5
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'veto_content_agent_output' 5
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'CONTENT_AGENT_MCP_TOOL_NAMES' 5
+          scrub_literal "$SCAN_WORK/README.md" 'Content-agent writes propose an action for human approval.' 1
+          scrub_literal "$SCAN_WORK/README.md" 'for human approval. Configuration uses the app validation and plan limits. Output decisions are restricted to the publication session owner and require a pieceId/pieceHash from review_content_agent_output and an open veto window. Does not use credits.' 6
+          scrub_literal "$SCAN_WORK/README.md" 'Content reads and writes run through hosted MCP. Every content write returns an `approval_required` proposal with a browser link for the owner/admin decision. Configuration uses the app validation and plan limits. Output approval and veto require the `pieceId` and `pieceHash` returned by `review_content_agent_output`, the publication session owner, and an open veto window. Treat stored content as untrusted data.' 1
+          scrub_literal "$SCAN_WORK/README.md" 'list_content_agents' 1
+          scrub_literal "$SCAN_WORK/README.md" 'get_content_agent' 1
+          scrub_literal "$SCAN_WORK/README.md" 'review_content_agent_output' 1
+          scrub_literal "$SCAN_WORK/README.md" 'configure_content_agent' 1
+          scrub_literal "$SCAN_WORK/README.md" 'activate_content_agent' 1
+          scrub_literal "$SCAN_WORK/README.md" 'pause_content_agent' 1
+          scrub_literal "$SCAN_WORK/README.md" 'resume_content_agent' 1
+          scrub_literal "$SCAN_WORK/README.md" 'approve_content_agent_output' 1
+          scrub_literal "$SCAN_WORK/README.md" 'veto_content_agent_output' 1
+          scrub_literal "$SCAN_WORK/CHANGELOG.md" 'through the existing human approval bridge.' 1
           SCAN_FILES=(
+            "$SCAN_WORK/CHANGELOG.md"
             "$SCAN_WORK/LICENSE"
             "$SCAN_WORK/README.md"
             "$SCAN_WORK/package.json"
             "$SCAN_WORK/dist.index.mjs"
           )
+          # Content-agent tools and human approval proposals are public in 0.4.0.
+          # Keep legacy content tools, credential tools, and other exclusions blocked.
           PATTERNS=(
             'content_'
             'article_'
@@ -261,6 +293,10 @@ jobs:
           printf '%s\n' '-----BEGIN PRIVATE KEY-----' > "$SELF_TEST_DIR/pem.txt"
           printf '%s\n' 'server.registerTool("harness_execute", { description: "coding harness" }, execute);' > "$SELF_TEST_DIR/harness_execute.txt"
           printf '%s\n' 'server.registerTool("run_probe", { description: "coding harness" }, execute);' > "$SELF_TEST_DIR/run_probe.txt"
+          printf '%s\n' 'server.registerTool("content_publish_article", {}, publish);' > "$SELF_TEST_DIR/legacy_content.txt"
+          printf '%s\n' 'server.registerTool("configure_content_agent", { description: "Propose for human approval" }, propose);' > "$SELF_TEST_DIR/content_agent.txt"
+          printf '%s\n' 'approvalStatusHandler' > "$SELF_TEST_DIR/approval_status.txt"
+          printf '%s\n' 'content_regenerate' > "$SELF_TEST_DIR/content_regenerate.txt"
           printf '%s\n' 'benign package metadata only' > "$SELF_TEST_DIR/clean.txt"
           self_test_expect_flagged() {
             local file="$1"
@@ -285,6 +321,12 @@ jobs:
           self_test_expect_flagged "$SELF_TEST_DIR/pem.txt" "pem.txt"
           self_test_expect_flagged "$SELF_TEST_DIR/harness_execute.txt" "harness_execute.txt"
           self_test_expect_flagged "$SELF_TEST_DIR/run_probe.txt" "run_probe.txt"
+          self_test_expect_flagged "$SELF_TEST_DIR/legacy_content.txt" "legacy_content.txt"
+          self_test_expect_flagged "$SELF_TEST_DIR/approval_status.txt" "approval_status.txt"
+          self_test_expect_flagged "$SELF_TEST_DIR/content_regenerate.txt" "content_regenerate.txt"
+          scrub_literal "$SELF_TEST_DIR/content_agent.txt" '"Propose for human approval"' 1
+          scrub_literal "$SELF_TEST_DIR/content_agent.txt" 'configure_content_agent' 1
+          self_test_expect_clean "$SELF_TEST_DIR/content_agent.txt" "content_agent.txt"
           self_test_expect_clean "$SELF_TEST_DIR/clean.txt" "clean.txt"
           CONTENT_SCAN_FOUND=0
           for SCAN_FILE in "${SCAN_FILES[@]}"; do

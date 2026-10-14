@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
+import { CONTENT_AGENT_TOOLS } from "./scripts/smoke-fetch-mock.mjs";
+
 const SERVER_ENTRY = "dist/index.mjs";
 const SDK_LATEST_PROTOCOL = "2025-11-25";
 const ALLOWED_ORIGIN = "https://app.prompteden.com";
@@ -49,16 +51,24 @@ const READ_TOOLS = new Set([
   "analytics_list_goals",
 ]);
 
-function startMcp({ withKey = true, baseUrl = ALLOWED_ORIGIN, catalog } = {}) {
+function startMcp({ withKey = true, baseUrl = ALLOWED_ORIGIN, catalog, contentGate } = {}) {
   const env = { ...process.env };
   if (baseUrl === undefined) delete env.PROMPTEDEN_BASE_URL;
   else env.PROMPTEDEN_BASE_URL = baseUrl;
   if (withKey) env.PROMPTEDEN_API_KEY = fakeApiKey;
   else delete env.PROMPTEDEN_API_KEY;
 
+  // Keep inherited mock settings from affecting a child scenario.
+  delete env.SMOKE_CONTENT_GATE;
+  delete env.SMOKE_CONTENT_TRACE;
+  delete env.SMOKE_PROVIDER_CATALOG;
   const args = [SERVER_ENTRY];
-  if (catalog) {
-    env.SMOKE_PROVIDER_CATALOG = JSON.stringify(catalog);
+  if (contentGate) {
+    env.SMOKE_CONTENT_GATE = contentGate;
+    env.SMOKE_CONTENT_TRACE = "1";
+  }
+  if (catalog) env.SMOKE_PROVIDER_CATALOG = JSON.stringify(catalog);
+  if (catalog || contentGate) {
     args.unshift(
       "--import",
       new URL("./scripts/smoke-fetch-mock.mjs", import.meta.url).pathname,
@@ -146,6 +156,7 @@ const mcp = startMcp({
 });
 let noKeyMcp;
 let badOriginMcp;
+const contentMcps = [];
 
 try {
   const initialized = await handshake(mcp, 1);
@@ -155,11 +166,12 @@ try {
   assert.equal(typeof initialized.instructions, "string");
   assert.match(initialized.instructions, /Settings > API Keys/);
   assert.match(initialized.instructions, /https:\/\/app\.prompteden\.com/);
-  assert.doesNotMatch(initialized.instructions, /content engine|sign_up|sign-up|OAuth|hosted/i);
+  assert.doesNotMatch(initialized.instructions, /sign_up|sign-up|password/i);
 
   const listed = await send(mcp, 2, "tools/list", {});
   const names = listed.tools.map((tool) => tool.name);
   assert.deepEqual(names, EXPECTED_TOOLS);
+  assert.equal(listed.nextCursor, undefined);
 
   for (const tool of listed.tools) {
     assert.equal(tool.annotations.destructiveHint, false, tool.name);
@@ -248,9 +260,73 @@ try {
   assert.match(badOrigin.result.content[0].text, /not allowed/);
   assert.match(badOrigin.result.content[0].text, /https:\/\/app\.prompteden\.com/);
 
+  for (const gate of ["enabled", "off", "retry"]) {
+    const contentMcp = startMcp({ contentGate: gate });
+    contentMcps.push(contentMcp);
+    await handshake(contentMcp, 1);
+    const first = await send(contentMcp, 2, "tools/list", {});
+    assert.deepEqual(first.tools.map((tool) => tool.name), EXPECTED_TOOLS);
+    assert.equal(first.nextCursor, undefined);
+    assert.equal(contentMcp.stderr(), "", "listing must not contact hosted MCP");
+    const result = await send(contentMcp, 3, "tools/call", {
+      name: "configure_content_agent",
+      arguments: { projectSlug: "smoke", agentId: 1, patch: { reviewPolicy: "every_piece" } },
+    });
+    if (gate === "retry") {
+      assert.equal(result.isError, true);
+      const failedList = await send(contentMcp, 4, "tools/list", {});
+      assert.equal(failedList.nextCursor, undefined);
+      assert.deepEqual(failedList.tools.map((tool) => tool.name), EXPECTED_TOOLS);
+      const retry = await send(contentMcp, 5, "tools/call", {
+        name: "configure_content_agent",
+        arguments: { agentId: 1, patch: { reviewPolicy: "every_piece" } },
+      });
+      assert.equal(JSON.parse(retry.content[0].text).status, "approval_required");
+      assert.match(contentMcp.stderr(), /Content tool discovery failed/);
+    } else if (gate === "off") {
+      assert.equal(result.isError, true);
+      assert.equal(contentMcp.stderr().includes("smoke-fetch-mock: tools/call"), false);
+    } else {
+      assert.equal(result.isError, undefined);
+      const proposal = JSON.parse(result.content[0].text);
+      assert.equal(proposal.status, "approval_required");
+      assert.equal(proposal.approvalUrl, "https://app.prompteden.com/approvals/1");
+      const read = await send(contentMcp, 6, "tools/call", {
+        name: "list_content_agents", arguments: { projectSlug: "smoke" },
+      });
+      assert.deepEqual(JSON.parse(read.content[0].text), { agents: [], untrusted: true });
+      const invalid = await send(contentMcp, 7, "tools/call", {
+        name: "approve_content_agent_output", arguments: { agentId: 1, articleId: 1 },
+      });
+      assert.equal(invalid.isError, true, "output decisions need review handles");
+    }
+    const publicPage = await send(contentMcp, 8, "tools/list", {});
+    assert.deepEqual(publicPage.tools.map((tool) => tool.name), EXPECTED_TOOLS);
+    assert.equal(publicPage.nextCursor, "hosted-content");
+    const page = await send(contentMcp, 9, "tools/list", { cursor: publicPage.nextCursor });
+    assert.deepEqual(page.tools.map((tool) => tool.name), gate === "off" ? [] : CONTENT_AGENT_TOOLS);
+    assert.equal(page.nextCursor, undefined);
+    assert.equal(contentMcp.stderr().includes(fakeApiKey), false);
+    assert.deepEqual(contentMcp.badLines, []);
+  }
+
+  const noKeyContent = await send(noKeyMcp, 3, "tools/call", {
+    name: "list_content_agents", arguments: {},
+  });
+  assert.equal(noKeyContent.isError, true);
+  for (const baseUrl of ["http://127.0.0.1:9", `${ALLOWED_ORIGIN}/path`, `${ALLOWED_ORIGIN}/?q=1`, `${ALLOWED_ORIGIN}/#hash`, "https://user:pass@app.prompteden.com"]) {
+    const invalidMcp = startMcp({ baseUrl, contentGate: "enabled" });
+    contentMcps.push(invalidMcp);
+    await handshake(invalidMcp, 1);
+    const denied = await send(invalidMcp, 2, "tools/call", { name: "list_content_agents", arguments: {} });
+    assert.equal(denied.isError, true);
+    assert.match(invalidMcp.stderr(), /Content tool discovery failed/);
+    assert.doesNotMatch(invalidMcp.stderr(), /smoke-fetch-mock:/, "invalid base must fail before HTTP");
+  }
+
   process.stdout.write("mcp smoke ok\n");
 } finally {
-  for (const child of [mcp, noKeyMcp, badOriginMcp]) {
+  for (const child of [mcp, noKeyMcp, badOriginMcp, ...contentMcps]) {
     if (!child) continue;
     child.child.stdin.end();
     child.child.kill();

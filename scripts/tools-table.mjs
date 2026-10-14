@@ -8,9 +8,18 @@ const START = "<!-- tools:start -->";
 const END = "<!-- tools:end -->";
 
 function startServer() {
-  const child = spawn(process.execPath, ["dist/index.mjs"], {
+  // Use an offline hosted fixture so the table includes the gated page without
+  // depending on credentials, a live team, or the state of the production gate.
+  const child = spawn(process.execPath, ["--import", new URL("./smoke-fetch-mock.mjs", import.meta.url).pathname, "dist/index.mjs"], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      PROMPTEDEN_API_KEY: "prompteden-test-key-not-secret",
+      PROMPTEDEN_BASE_URL: "https://app.prompteden.com",
+      SMOKE_CONTENT_GATE: "enabled",
+      SMOKE_CONTENT_TRACE: "0",
+      SMOKE_PROVIDER_CATALOG: "",
+    },
   });
   const lines = [];
   const rl = createInterface({ input: child.stdout });
@@ -67,7 +76,20 @@ async function listTools() {
     );
     const listed = await waitFor(mcp.lines, 2);
     assert.equal(listed.error, undefined);
-    return listed.result.tools;
+    assert.equal(listed.result.nextCursor, undefined);
+    const request = async (id, method, params) => {
+      mcp.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      const response = await waitFor(mcp.lines, id);
+      assert.equal(response.error, undefined);
+      return response.result;
+    };
+    const discovery = await request(3, "tools/call", { name: "list_content_agents", arguments: {} });
+    assert.equal(discovery.isError, undefined);
+    const publicPage = await request(4, "tools/list", {});
+    assert.equal(publicPage.nextCursor, "hosted-content");
+    const contentPage = await request(5, "tools/list", { cursor: publicPage.nextCursor });
+    assert.equal(contentPage.nextCursor, undefined);
+    return [...publicPage.tools, ...contentPage.tools];
   } finally {
     mcp.child.stdin.end();
     mcp.child.kill();
@@ -83,7 +105,7 @@ function render(tools) {
     .filter((tool) => tool.name.startsWith("analytics_"))
     .map((tool) => `\`${tool.name}\``);
   const rows = [
-    `This build registers ${tools.length} tools. Analytics tools are included (${analytics.length}): ${analytics.join(", ")}.`,
+    `This build supports ${tools.length} tools: ${tools.length - 9} public tools and 9 content-agent tools gated by the hosted team flags. Analytics tools are included (${analytics.length}): ${analytics.join(", ")}.`,
     "",
     "| Tool | Description |",
     "| --- | --- |",
