@@ -15,6 +15,7 @@ export function installSmokeFetchMock({ catalog, contentGate, trace = false } = 
   const original = globalThis.fetch;
   const calls = [];
   let discoveries = 0;
+  let delayedHostedRequest = false;
   const originalNow = Date.now;
   let elapsed = 0;
   // Advance only this child's clock to exercise the 60-second gate refresh.
@@ -48,12 +49,14 @@ export function installSmokeFetchMock({ catalog, contentGate, trace = false } = 
     if (method !== "POST") throw new Error("Unexpected mock method");
     if (trace) process.stderr.write(`smoke-fetch-mock: ${body.method}\n`);
     if (body.id === undefined) return new Response(null, { status: 202 });
+    // Start the delay at the first hosted request, after local initialization.
+    if (contentGate === "slow" && !delayedHostedRequest) {
+      delayedHostedRequest = true;
+      await new Promise((resolve) => setTimeout(resolve, 6_500));
+    }
     let result;
     switch (body.method) {
       case "initialize":
-        if (contentGate === "slow" && discoveries === 0) {
-          await new Promise((resolve) => setTimeout(resolve, 6_500));
-        }
         result = {
           protocolVersion: body.params.protocolVersion,
           capabilities: { tools: {} },

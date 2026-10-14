@@ -326,13 +326,22 @@ try {
   const slowMcp = startMcp({ contentGate: "slow" });
   contentMcps.push(slowMcp);
   const initStarted = Date.now();
-  await handshake(slowMcp, 1);
+  await send(slowMcp, 1, "initialize", initParams());
   assert.ok(Date.now() - initStarted < 2_000, "initialize must not wait for discovery");
+  assert.equal(slowMcp.stderr(), "", "hosted discovery must wait for notifications/initialized");
+  // Queue initialization and the first requests together, so runner delays
+  // cannot consume the mock's discovery delay before tools/list starts.
+  slowMcp.child.stdin.cork();
+  slowMcp.child.stdin.write(
+    `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+  );
   const earlyContentCall = send(slowMcp, "early-content-call", "tools/call", {
     name: "list_content_agents", arguments: {},
   });
   const listStarted = Date.now();
-  const slowList = await send(slowMcp, 2, "tools/list", {});
+  const slowListResponse = send(slowMcp, 2, "tools/list", {});
+  slowMcp.child.stdin.uncork();
+  const slowList = await slowListResponse;
   const listElapsed = Date.now() - listStarted;
   assert.ok(listElapsed >= 4_500 && listElapsed < 6_000, "tools/list must wait at most five seconds for discovery");
   assert.deepEqual(slowList.tools.map((tool) => tool.name), EXPECTED_TOOLS);

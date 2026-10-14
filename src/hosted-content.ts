@@ -34,11 +34,11 @@ export async function hostedContentToolsOptions(): Promise<RegisterPromptEdenToo
       await client.close();
     }
   }
-  const listed = await remote((client) => client.listTools());
+  const listed = await remote((client) => client.listTools(undefined, { timeout: 15_000 }));
   const agentsEnabled = listed.tools.some((tool) => tool.name === "list_content_agents");
   const call = async (name: string, args: Record<string, unknown>) =>
     await remote((client) =>
-      client.callTool({ name, arguments: args }),
+      client.callTool({ name, arguments: args }, undefined, { timeout: 15_000 }),
     ) as PromptEdenMcpToolResult;
   return {
     contentAgentsEnabled: agentsEnabled,
@@ -126,5 +126,5 @@ export function registerLazyHostedContentTools(server: McpServer): void {
   } finally {
     server.server.setRequestHandler = install;
   }
-  void discover();
+  server.server.oninitialized = () => { void discover(); };
 }
