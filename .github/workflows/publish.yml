@@ -5,7 +5,7 @@ on:
 
 env:
   EXPECTED_VERSION: "0.4.0"
-  REVIEWED_BASE: "2ce401f4cf9938576ca4f8311b9eda75a2ff207b"
+  REVIEWED_BASE: "fd5378ea230eb534ead06b655f41f6678e701366"
   # mcp-publisher_linux_amd64.tar.gz from modelcontextprotocol/registry v1.8.1
   # registry_1.8.1_checksums.txt (official GitHub release asset).
   MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
