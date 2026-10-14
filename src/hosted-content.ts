@@ -12,7 +12,7 @@ import {
 } from "./tools.js";
 import { normalizeBaseUrl } from "./api-client/client.js";
 
-/** Discover the authenticated team"s gate from the host; local env cannot grant access. */
+/** Discover the authenticated team's gate from the host; local env cannot grant access. */
 export async function hostedContentToolsOptions(): Promise<RegisterPromptEdenToolsOptions> {
   const apiKey = process.env.PROMPTEDEN_API_KEY;
   if (!apiKey) return { contentAgentsEnabled: false };
