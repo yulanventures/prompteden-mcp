@@ -15,12 +15,22 @@ export function installSmokeFetchMock({ catalog, contentGate, trace = false } = 
   const original = globalThis.fetch;
   const calls = [];
   let discoveries = 0;
+  const originalNow = Date.now;
+  let elapsed = 0;
+  // Advance only this child's clock to exercise the 60-second gate refresh.
+  if (contentGate === "change") Date.now = () => originalNow() + elapsed;
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input instanceof Request ? input.url : input));
     const method = String(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url: url.toString(), method, headers, body });
+    if (trace) process.stderr.write(`smoke-fetch-mock: HTTP ${method} ${url.pathname}\n`);
+    // The credential belongs only in the Authorization header.
+    const mockKey = "prompteden-test-key-not-secret";
+    if (url.toString().includes(mockKey) || JSON.stringify(body ?? {}).includes(mockKey)) {
+      throw new Error("Mock API key leaked outside Authorization");
+    }
     if (url.origin !== "https://app.prompteden.com") throw new Error("Unexpected mock origin");
     if (method === "GET" && url.pathname === "/api/v1/monitoring/providers" && catalog) {
       return Response.json(catalog);
@@ -41,10 +51,13 @@ export function installSmokeFetchMock({ catalog, contentGate, trace = false } = 
     let result;
     switch (body.method) {
       case "initialize":
+        if (contentGate === "slow" && discoveries === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 6_500));
+        }
         result = {
           protocolVersion: body.params.protocolVersion,
           capabilities: { tools: {} },
-          serverInfo: { name: "mock-hosted", version: "0.4.0" },
+          serverInfo: { name: "mock-hosted", version: "0.4.1" },
         };
         break;
       case "tools/list":
@@ -53,10 +66,11 @@ export function installSmokeFetchMock({ catalog, contentGate, trace = false } = 
           return Response.json({ error: "unavailable" }, { status: 503 });
         }
         result = {
-          tools: contentGate === "off" ? [] : CONTENT_AGENT_TOOLS.map((name) => ({ name, inputSchema: { type: "object" } })),
+          tools: (contentGate === "off" || (contentGate === "change" && discoveries > 1)) ? [] : CONTENT_AGENT_TOOLS.map((name) => ({ name, inputSchema: { type: "object" } })),
         };
         break;
       case "tools/call": {
+        if (contentGate === "change") elapsed += 60_001;
         const name = body.params.name;
         if (!CONTENT_AGENT_TOOLS.includes(name)) throw new Error("Unexpected hosted tool");
         const readOnly = CONTENT_AGENT_TOOLS.indexOf(name) < 3;
@@ -72,7 +86,10 @@ export function installSmokeFetchMock({ catalog, contentGate, trace = false } = 
     }
     return Response.json({ jsonrpc: "2.0", id: body.id, result });
   };
-  return { calls, restore: () => { globalThis.fetch = original; } };
+  return { calls, restore: () => {
+    globalThis.fetch = original;
+    if (contentGate === "change") Date.now = originalNow;
+  } };
 }
 
 if (process.env.SMOKE_PROVIDER_CATALOG || process.env.SMOKE_CONTENT_GATE) {
