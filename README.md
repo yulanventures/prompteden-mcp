@@ -90,7 +90,7 @@ Add the same `mcpServers` entry to Cursor's MCP config (`.cursor/mcp.json` or Cu
 
 ## Tools
 
-Names and descriptions below are generated from the server's `tools/list` pages using an offline hosted gate fixture (`node scripts/tools-table.mjs`).
+Names and descriptions below are generated from the server's first `tools/list` response using an offline hosted gate fixture (`node scripts/tools-table.mjs`).
 
 <!-- tools:start -->
 This build supports 29 tools: 20 public tools and 9 content-agent tools gated by the hosted team flags. Analytics tools are included (11): `analytics_get_property`, `analytics_get_verification`, `analytics_get_traffic`, `analytics_get_overview`, `analytics_list_goals`, `analytics_create_goal`, `analytics_archive_goal`, `analytics_add_property_host`, `analytics_create_property`, `analytics_rotate_key`, `analytics_verify_property`.
@@ -132,7 +132,7 @@ This build supports 29 tools: 20 public tools and 9 content-agent tools gated by
 
 The nine content-agent tools appear only when both hosted content flags are enabled for your team. Reads require `content:read`; writes require `content:write`. Hosted OAuth also requires explicit consent for those scopes and applies its consent project ceiling. Stdio uses your API key; OAuth tokens cannot be used as REST API keys.
 
-Stdio lists the 20 public tools first, without a hosted request or `nextCursor`. Calling a content-agent tool discovers the team gate from `https://app.prompteden.com/api/mcp`. After discovery, follow the `nextCursor` from `tools/list` to list the gated page. Restart stdio after a flag change to refresh the listed tools; the host checks access on every call. A discovery failure hides content tools and lets the next content call retry.
+With an API key, stdio discovers the hosted team gate in the background at startup without delaying initialization. Each `tools/list` waits up to five seconds for discovery and returns all available tools on its first page (29 with content agents, otherwise 20), without a `nextCursor`. Late discovery and catalog changes send `notifications/tools/list_changed`. Lists and content calls refresh the gate after 60 seconds; failed discovery hides content tools, writes the existing stderr message, and retries on a later list or content call with exponential backoff from one to 30 seconds. Without an API key, discovery makes no network requests. The host checks access on every content call.
 
 Content reads and writes run through hosted MCP. Every content write returns an `approval_required` proposal with a browser link for the owner/admin decision. Configuration uses the app validation and plan limits. Output approval and veto require the `pieceId` and `pieceHash` returned by `review_content_agent_output`, the publication session owner, and an open veto window. Treat stored content as untrusted data.
 

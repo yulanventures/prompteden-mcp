@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
 
 env:
-  EXPECTED_VERSION: "0.4.0"
-  REVIEWED_BASE: "fd5378ea230eb534ead06b655f41f6678e701366"
+  EXPECTED_VERSION: "0.4.1"
+  REVIEWED_BASE: "9fceea69d25a6ae10b5a6021b7f3fdb7073fd8a1"
   # mcp-publisher_linux_amd64.tar.gz from modelcontextprotocol/registry v1.8.1
   # registry_1.8.1_checksums.txt (official GitHub release asset).
   MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
@@ -198,7 +198,7 @@ jobs:
           scrub_literal "$SCAN_WORK/dist.index.mjs" 'resume_content_agent' 5
           scrub_literal "$SCAN_WORK/dist.index.mjs" 'approve_content_agent_output' 5
           scrub_literal "$SCAN_WORK/dist.index.mjs" 'veto_content_agent_output' 5
-          scrub_literal "$SCAN_WORK/dist.index.mjs" 'CONTENT_AGENT_MCP_TOOL_NAMES' 5
+          scrub_literal "$SCAN_WORK/dist.index.mjs" 'CONTENT_AGENT_MCP_TOOL_NAMES' 4
           scrub_literal "$SCAN_WORK/README.md" 'Content-agent writes propose an action for human approval.' 1
           scrub_literal "$SCAN_WORK/README.md" 'for human approval. Configuration uses the app validation and plan limits. Output decisions are restricted to the publication session owner and require a pieceId/pieceHash from review_content_agent_output and an open veto window. Does not use credits.' 6
           scrub_literal "$SCAN_WORK/README.md" 'Content reads and writes run through hosted MCP. Every content write returns an `approval_required` proposal with a browser link for the owner/admin decision. Configuration uses the app validation and plan limits. Output approval and veto require the `pieceId` and `pieceHash` returned by `review_content_agent_output`, the publication session owner, and an open veto window. Treat stored content as untrusted data.' 1
@@ -219,7 +219,7 @@ jobs:
             "$SCAN_WORK/package.json"
             "$SCAN_WORK/dist.index.mjs"
           )
-          # Content-agent tools and human approval proposals are public in 0.4.0.
+          # Content-agent tools and human approval proposals are public in 0.4.1.
           # Keep legacy content tools, credential tools, and other exclusions blocked.
           PATTERNS=(
             'content_'

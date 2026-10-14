@@ -51,7 +51,7 @@ const READ_TOOLS = new Set([
   "analytics_list_goals",
 ]);
 
-function startMcp({ withKey = true, baseUrl = ALLOWED_ORIGIN, catalog, contentGate } = {}) {
+function startMcp({ withKey = true, baseUrl = ALLOWED_ORIGIN, catalog, contentGate = "off" } = {}) {
   const env = { ...process.env };
   if (baseUrl === undefined) delete env.PROMPTEDEN_BASE_URL;
   else env.PROMPTEDEN_BASE_URL = baseUrl;
@@ -106,12 +106,20 @@ function waitForLine(lines, id) {
         resolve(line);
         return;
       }
-      if (Date.now() - startedAt > 5000) {
+      if (Date.now() - startedAt > 8000) {
         clearInterval(timer);
         reject(new Error(`Timed out waiting for JSON-RPC response id ${id}`));
       }
     }, 10);
   });
+}
+
+async function waitForNotification(mcp, method) {
+  const startedAt = Date.now();
+  while (!mcp.lines.some((line) => line.method === method)) {
+    if (Date.now() - startedAt > 8_000) throw new Error(`Timed out waiting for ${method}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function initParams(protocolVersion = SDK_LATEST_PROTOCOL) {
@@ -238,8 +246,12 @@ try {
   for (const line of mcp.lines) assert.equal(line.jsonrpc, "2.0");
   assert.equal(mcp.stderr().includes(fakeApiKey), false);
 
-  noKeyMcp = startMcp({ withKey: false });
+  noKeyMcp = startMcp({ withKey: false, contentGate: "enabled" });
   await handshake(noKeyMcp, 1);
+  const noKeyList = await send(noKeyMcp, "no-key-list", "tools/list", {});
+  assert.deepEqual(noKeyList.tools.map((tool) => tool.name), EXPECTED_TOOLS);
+  assert.equal(noKeyList.nextCursor, undefined);
+  assert.equal(noKeyMcp.stderr(), "", "no key must mean no hosted HTTP");
   const noKeyAccount = await sendRaw(noKeyMcp, 2, "tools/call", {
     name: "get_account",
     arguments: {},
@@ -263,27 +275,31 @@ try {
   for (const gate of ["enabled", "off", "retry"]) {
     const contentMcp = startMcp({ contentGate: gate });
     contentMcps.push(contentMcp);
-    await handshake(contentMcp, 1);
+    const initialized = await handshake(contentMcp, 1);
+    assert.equal(initialized.capabilities.tools.listChanged, true);
     const first = await send(contentMcp, 2, "tools/list", {});
-    assert.deepEqual(first.tools.map((tool) => tool.name), EXPECTED_TOOLS);
+    const expected = gate === "enabled" ? [...EXPECTED_TOOLS, ...CONTENT_AGENT_TOOLS] : EXPECTED_TOOLS;
+    assert.deepEqual(first.tools.map((tool) => tool.name), expected);
     assert.equal(first.nextCursor, undefined);
-    assert.equal(contentMcp.stderr(), "", "listing must not contact hosted MCP");
+    if (gate === "retry") {
+      assert.match(contentMcp.stderr(), /Content tool discovery failed; retry the content request to refresh access\./);
+      const notificationsBefore = contentMcp.lines.filter((line) => line.method === "notifications/tools/list_changed").length;
+      const failedList = await send(contentMcp, "backoff-list", "tools/list", {});
+      assert.deepEqual(failedList.tools.map((tool) => tool.name), EXPECTED_TOOLS);
+      assert.equal((contentMcp.stderr().match(/smoke-fetch-mock: tools\/list/g) ?? []).length, 1,
+        "requests during backoff must not start another discovery");
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      const recovered = await send(contentMcp, "recovered-list", "tools/list", {});
+      assert.deepEqual(recovered.tools.map((tool) => tool.name), [...EXPECTED_TOOLS, ...CONTENT_AGENT_TOOLS]);
+      assert.equal(recovered.nextCursor, undefined);
+      assert.ok(contentMcp.lines.filter((line) => line.method === "notifications/tools/list_changed").length > notificationsBefore,
+        "recovery after an answered list must notify the client");
+    }
     const result = await send(contentMcp, 3, "tools/call", {
       name: "configure_content_agent",
       arguments: { projectSlug: "smoke", agentId: 1, patch: { reviewPolicy: "every_piece" } },
     });
-    if (gate === "retry") {
-      assert.equal(result.isError, true);
-      const failedList = await send(contentMcp, 4, "tools/list", {});
-      assert.equal(failedList.nextCursor, undefined);
-      assert.deepEqual(failedList.tools.map((tool) => tool.name), EXPECTED_TOOLS);
-      const retry = await send(contentMcp, 5, "tools/call", {
-        name: "configure_content_agent",
-        arguments: { agentId: 1, patch: { reviewPolicy: "every_piece" } },
-      });
-      assert.equal(JSON.parse(retry.content[0].text).status, "approval_required");
-      assert.match(contentMcp.stderr(), /Content tool discovery failed/);
-    } else if (gate === "off") {
+    if (gate === "off") {
       assert.equal(result.isError, true);
       assert.equal(contentMcp.stderr().includes("smoke-fetch-mock: tools/call"), false);
     } else {
@@ -300,20 +316,67 @@ try {
       });
       assert.equal(invalid.isError, true, "output decisions need review handles");
     }
-    const publicPage = await send(contentMcp, 8, "tools/list", {});
-    assert.deepEqual(publicPage.tools.map((tool) => tool.name), EXPECTED_TOOLS);
-    assert.equal(publicPage.nextCursor, "hosted-content");
-    const page = await send(contentMcp, 9, "tools/list", { cursor: publicPage.nextCursor });
-    assert.deepEqual(page.tools.map((tool) => tool.name), gate === "off" ? [] : CONTENT_AGENT_TOOLS);
-    assert.equal(page.nextCursor, undefined);
+    const refreshed = await send(contentMcp, 8, "tools/list", {});
+    assert.deepEqual(refreshed.tools.map((tool) => tool.name), gate === "off" ? EXPECTED_TOOLS : [...EXPECTED_TOOLS, ...CONTENT_AGENT_TOOLS]);
+    assert.equal(refreshed.nextCursor, undefined);
     assert.equal(contentMcp.stderr().includes(fakeApiKey), false);
     assert.deepEqual(contentMcp.badLines, []);
   }
+
+  const slowMcp = startMcp({ contentGate: "slow" });
+  contentMcps.push(slowMcp);
+  const initStarted = Date.now();
+  await send(slowMcp, 1, "initialize", initParams());
+  assert.ok(Date.now() - initStarted < 2_000, "initialize must not wait for discovery");
+  assert.equal(slowMcp.stderr(), "", "hosted discovery must wait for notifications/initialized");
+  // Queue initialization and the first requests together, so runner delays
+  // cannot consume the mock's discovery delay before tools/list starts.
+  slowMcp.child.stdin.cork();
+  slowMcp.child.stdin.write(
+    `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+  );
+  const earlyContentCall = send(slowMcp, "early-content-call", "tools/call", {
+    name: "list_content_agents", arguments: {},
+  });
+  const listStarted = Date.now();
+  const slowListResponse = send(slowMcp, 2, "tools/list", {});
+  slowMcp.child.stdin.uncork();
+  const slowList = await slowListResponse;
+  const listElapsed = Date.now() - listStarted;
+  assert.ok(listElapsed >= 4_500 && listElapsed < 6_000, "tools/list must wait at most five seconds for discovery");
+  assert.deepEqual(slowList.tools.map((tool) => tool.name), EXPECTED_TOOLS);
+  assert.equal(slowList.nextCursor, undefined);
+  // A ping still works while the hosted request is outstanding.
+  assert.deepEqual(await send(slowMcp, 3, "ping", {}), {});
+  assert.equal((await earlyContentCall).isError, undefined, "content calls must wait for the shared discovery");
+  await waitForNotification(slowMcp, "notifications/tools/list_changed");
+  const afterSlowDiscovery = await send(slowMcp, 4, "tools/list", {});
+  assert.deepEqual(afterSlowDiscovery.tools.map((tool) => tool.name), [...EXPECTED_TOOLS, ...CONTENT_AGENT_TOOLS]);
+  assert.equal(afterSlowDiscovery.nextCursor, undefined);
+  assert.equal((slowMcp.stderr().match(/smoke-fetch-mock: tools\/list/g) ?? []).length, 1,
+    "a timed-out local list must share the outstanding discovery");
+
+  const changedGateMcp = startMcp({ contentGate: "change" });
+  contentMcps.push(changedGateMcp);
+  await handshake(changedGateMcp, 1);
+  const beforeChange = await send(changedGateMcp, 2, "tools/list", {});
+  assert.deepEqual(beforeChange.tools.map((tool) => tool.name), [...EXPECTED_TOOLS, ...CONTENT_AGENT_TOOLS]);
+  // The hosted fixture advances the child clock and disables the gate after this call.
+  await send(changedGateMcp, 3, "tools/call", { name: "list_content_agents", arguments: {} });
+  const noticesBeforeChange = changedGateMcp.lines.filter((line) => line.method === "notifications/tools/list_changed").length;
+  const afterChange = await send(changedGateMcp, 4, "tools/list", {});
+  assert.deepEqual(afterChange.tools.map((tool) => tool.name), EXPECTED_TOOLS);
+  assert.equal(afterChange.nextCursor, undefined);
+  assert.ok(changedGateMcp.lines.filter((line) => line.method === "notifications/tools/list_changed").length > noticesBeforeChange,
+    "a later gate change must notify the client");
+  const revoked = await send(changedGateMcp, 5, "tools/call", { name: "list_content_agents", arguments: {} });
+  assert.equal(revoked.isError, true);
 
   const noKeyContent = await send(noKeyMcp, 3, "tools/call", {
     name: "list_content_agents", arguments: {},
   });
   assert.equal(noKeyContent.isError, true);
+  assert.equal(noKeyMcp.stderr(), "", "no-key lists and calls must never fetch");
   for (const baseUrl of ["http://127.0.0.1:9", `${ALLOWED_ORIGIN}/path`, `${ALLOWED_ORIGIN}/?q=1`, `${ALLOWED_ORIGIN}/#hash`, "https://user:pass@app.prompteden.com"]) {
     const invalidMcp = startMcp({ baseUrl, contentGate: "enabled" });
     contentMcps.push(invalidMcp);

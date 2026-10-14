@@ -8,7 +8,7 @@ const START = "<!-- tools:start -->";
 const END = "<!-- tools:end -->";
 
 function startServer() {
-  // Use an offline hosted fixture so the table includes the gated page without
+  // Use an offline hosted fixture so the table includes the gated tools without
   // depending on credentials, a live team, or the state of the production gate.
   const child = spawn(process.execPath, ["--import", new URL("./smoke-fetch-mock.mjs", import.meta.url).pathname, "dist/index.mjs"], {
     stdio: ["pipe", "pipe", "pipe"],
@@ -77,19 +77,8 @@ async function listTools() {
     const listed = await waitFor(mcp.lines, 2);
     assert.equal(listed.error, undefined);
     assert.equal(listed.result.nextCursor, undefined);
-    const request = async (id, method, params) => {
-      mcp.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-      const response = await waitFor(mcp.lines, id);
-      assert.equal(response.error, undefined);
-      return response.result;
-    };
-    const discovery = await request(3, "tools/call", { name: "list_content_agents", arguments: {} });
-    assert.equal(discovery.isError, undefined);
-    const publicPage = await request(4, "tools/list", {});
-    assert.equal(publicPage.nextCursor, "hosted-content");
-    const contentPage = await request(5, "tools/list", { cursor: publicPage.nextCursor });
-    assert.equal(contentPage.nextCursor, undefined);
-    return [...publicPage.tools, ...contentPage.tools];
+    assert.equal(listed.result.tools.length, 29);
+    return listed.result.tools;
   } finally {
     mcp.child.stdin.end();
     mcp.child.kill();

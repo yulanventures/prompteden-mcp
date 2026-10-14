@@ -23,7 +23,7 @@ export const DEFAULT_BASE_URL = "https://app.prompteden.com";
 
 // Kept in sync with package.json "version"; the smoke test asserts this matches
 // the published package version so the two never drift.
-export const SERVER_VERSION = "0.4.0";
+export const SERVER_VERSION = "0.4.1";
 
 export const SERVER_INSTRUCTIONS =
   "PromptEden MCP server. Exposes tools for accounts, projects, monitors, monitor results, " +

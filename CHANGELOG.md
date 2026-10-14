@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Content-agent tools appear on the first tools/list when the team has content agents.
+
 ## 0.4.0
 
 - Add nine content-agent management and output-review tools with team gating.

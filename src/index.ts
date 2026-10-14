@@ -36,7 +36,7 @@ Transport:
 
 const server = new McpServer(
   { name: "prompteden-mcp", version: SERVER_VERSION },
-  { instructions: SERVER_INSTRUCTIONS },
+  { instructions: SERVER_INSTRUCTIONS, capabilities: { tools: { listChanged: true } } },
 );
 
 async function main(): Promise<void> {
