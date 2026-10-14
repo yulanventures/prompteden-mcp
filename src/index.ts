@@ -2,13 +2,14 @@
  * PromptEden MCP stdio server.
  */
 
+import { registerLazyHostedContentTools } from "./hosted-content.js";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   DEFAULT_BASE_URL,
   SERVER_INSTRUCTIONS,
   SERVER_VERSION,
-  registerPromptEdenTools,
 } from "./tools.js";
 
 if (process.argv.some((arg) => arg === "--help" || arg === "-h")) {
@@ -38,9 +39,8 @@ const server = new McpServer(
   { instructions: SERVER_INSTRUCTIONS },
 );
 
-registerPromptEdenTools(server);
-
 async function main(): Promise<void> {
+  registerLazyHostedContentTools(server);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

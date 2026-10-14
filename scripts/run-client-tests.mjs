@@ -1,17 +1,17 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
 import * as esbuild from "esbuild";
 
-const dir = await mkdtemp(join(tmpdir(), "prompteden-client-test-"));
-const outfile = join(dir, "client.test.mjs");
+await mkdir("build", { recursive: true });
+const dir = await mkdtemp(join("build", "prompteden-test-"));
 
 try {
   await esbuild.build({
-    entryPoints: ["src/api-client/client.test.ts"],
-    outfile,
+    entryPoints: ["src/api-client/client.test.ts", "src/tools.test.ts"],
+    outdir: dir,
+    outbase: "src",
     bundle: true,
     platform: "node",
     format: "esm",
@@ -19,13 +19,13 @@ try {
   });
 
   const code = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--test", outfile], {
+    const child = spawn(process.execPath, ["--test", join(dir, "api-client/client.test.js"), join(dir, "tools.test.js")], {
       stdio: "inherit",
     });
     child.on("error", reject);
     child.on("exit", (status) => resolve(status ?? 1));
   });
-  process.exit(code);
+  process.exitCode = code;
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

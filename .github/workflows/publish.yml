@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  EXPECTED_VERSION: "0.3.0"
+  EXPECTED_VERSION: "0.4.0"
   REVIEWED_BASE: "2ce401f4cf9938576ca4f8311b9eda75a2ff207b"
   # mcp-publisher_linux_amd64.tar.gz from modelcontextprotocol/registry v1.8.1
   # registry_1.8.1_checksums.txt (official GitHub release asset).
@@ -113,7 +113,8 @@ jobs:
             echo "ripgrep (rg) is required for the content gate"
             exit 1
           fi
-          ALLOWED_FILES="LICENSE
+          ALLOWED_FILES="CHANGELOG.md
+          LICENSE
           README.md
           dist/index.mjs
           package.json"
@@ -146,6 +147,7 @@ jobs:
           tar -xzf "$TARBALL" -C "$UNPACK_DIR"
           SCAN_ROOT="$UNPACK_DIR/package"
           SCAN_WORK="$(mktemp -d)"
+          cp "$SCAN_ROOT/CHANGELOG.md" "$SCAN_WORK/CHANGELOG.md"
           cp "$SCAN_ROOT/LICENSE" "$SCAN_WORK/LICENSE"
           cp "$SCAN_ROOT/README.md" "$SCAN_WORK/README.md"
           cp "$SCAN_ROOT/package.json" "$SCAN_WORK/package.json"
@@ -184,20 +186,23 @@ jobs:
           scrub_literal "$SCAN_WORK/README.md" 'text.includes("coding harness")' 0
           scrub_literal "$SCAN_WORK/README.md" 'text.includes("agent harness")' 0
           SCAN_FILES=(
+            "$SCAN_WORK/CHANGELOG.md"
             "$SCAN_WORK/LICENSE"
             "$SCAN_WORK/README.md"
             "$SCAN_WORK/package.json"
             "$SCAN_WORK/dist.index.mjs"
           )
+          # Content-agent tools and human approval proposals are public in 0.4.0.
+          # Keep legacy content tools, credential tools, and other exclusions blocked.
           PATTERNS=(
-            'content_'
+            'content_(list_topics|list_articles|get_article|create_topic|update_topic|generate_article|update_article|publish_article)'
             'article_'
             'newsroom'
             'create_content'
             'generate_content'
             'update_content'
             'publish_content'
-            'list_content'
+            'list_content_(topics|articles)'
             'preview_displacement'
             'displacement'
             'check_approval'
@@ -206,7 +211,6 @@ jobs:
             'harness_run'
             'harness'
             'Wells'
-            'approval'
             'staging'
             '/Users/'
             '/private/tmp'
@@ -261,6 +265,8 @@ jobs:
           printf '%s\n' '-----BEGIN PRIVATE KEY-----' > "$SELF_TEST_DIR/pem.txt"
           printf '%s\n' 'server.registerTool("harness_execute", { description: "coding harness" }, execute);' > "$SELF_TEST_DIR/harness_execute.txt"
           printf '%s\n' 'server.registerTool("run_probe", { description: "coding harness" }, execute);' > "$SELF_TEST_DIR/run_probe.txt"
+          printf '%s\n' 'server.registerTool("content_publish_article", {}, publish);' > "$SELF_TEST_DIR/legacy_content.txt"
+          printf '%s\n' 'server.registerTool("configure_content_agent", { description: "Propose for human approval" }, propose);' > "$SELF_TEST_DIR/content_agent.txt"
           printf '%s\n' 'benign package metadata only' > "$SELF_TEST_DIR/clean.txt"
           self_test_expect_flagged() {
             local file="$1"
@@ -285,6 +291,8 @@ jobs:
           self_test_expect_flagged "$SELF_TEST_DIR/pem.txt" "pem.txt"
           self_test_expect_flagged "$SELF_TEST_DIR/harness_execute.txt" "harness_execute.txt"
           self_test_expect_flagged "$SELF_TEST_DIR/run_probe.txt" "run_probe.txt"
+          self_test_expect_flagged "$SELF_TEST_DIR/legacy_content.txt" "legacy_content.txt"
+          self_test_expect_clean "$SELF_TEST_DIR/content_agent.txt" "content_agent.txt"
           self_test_expect_clean "$SELF_TEST_DIR/clean.txt" "clean.txt"
           CONTENT_SCAN_FOUND=0
           for SCAN_FILE in "${SCAN_FILES[@]}"; do
