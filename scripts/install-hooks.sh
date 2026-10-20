@@ -7,9 +7,17 @@ if [ -n "$existing" ] && [ "$existing" != scripts/hooks ]; then
   printf 'Existing hooksPath is %s; add python3 scripts/check-file-size.py --staged to its pre-commit hook.\n' "$existing" >&2
   exit 1
 fi
-local_hook=$(git rev-parse --git-path hooks/pre-commit)
-if [ -f "$local_hook" ]; then
-  printf 'Existing hook at %s; add python3 scripts/check-file-size.py --staged there before opting in.\n' "$local_hook" >&2
+local_hooks=$(git rev-parse --git-path hooks)
+active_hooks=''
+if [ -d "$local_hooks" ]; then
+  active_hooks=$(find -L "$local_hooks" -type f ! -name '*.sample' -exec sh -c '
+    for hook do
+      if [ -x "$hook" ]; then printf "%s\n" "$hook"; fi
+    done
+  ' sh {} +)
+fi
+if [ -n "$active_hooks" ]; then
+  printf 'Refusing to disable existing executable hooks:\n%s\nAdd the file-size check to the existing hooks instead.\n' "$active_hooks" >&2
   exit 1
 fi
 git config core.hooksPath scripts/hooks
